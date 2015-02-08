@@ -54,7 +54,10 @@ void nfst_init(struct nfst_StringTable *st, int32_t bytes);
 // grow or shrink the string table. Usually you should pair this with a
 // `realloc` to also grow or shrkink the memory buffer. If the `dest`
 // table, the first that fit will be preserved.
-void nfst_resize(struct nfst_StringTable *st, int32_t new_bytes);
+//
+// Returns 0 if all strings were copied, a non-zero value if the string
+// list was truncated.
+int nfst_resize(struct nfst_StringTable *st, int32_t new_bytes);
 
 // Returns the minimal size that can hold all the strings in the table.
 // This can be used to "shrink-to-fit" the string table.
@@ -127,15 +130,18 @@ static inline int32_t max_items(int32_t bytes, int32_t average_string_length)
 	return result;
 }
 
+static inline int32_t bytes(int32_t count, int32_t string_bytes)
+{
+	const int32_t num_hash_slots = count * 100 / MAX_HASH_FILL_RATE;
+	return num_hash_slots * sizeof(uint32_t) + string_bytes;
+}
+
 // We must have room for at leat one hash slot and one string
 static int32_t MIN_SIZE = sizeof(struct nfst_StringTable) + 1*(uint32_t) + 4;
 
 inline void nfst_init(struct nfst_StringTable *st, int32_t bytes)
 {
 	assert(bytes > MIN_SIZE);
-
-	// Ensure that we have room to store the header.
-	assert(bytes >= sizeof(struct nfst_StringTable));
 
 	st->allocated_bytes = bytes;
 	st->count = 0;
@@ -154,57 +160,70 @@ inline void nfst_init(struct nfst_StringTable *st, int32_t bytes)
 
 }
 
-void nfst_resize(struct nfst_StringTable *st, int32_t new_bytes)
+int nfst_resize(struct nfst_StringTable *st, int32_t new_bytes)
 {
 	assert(new_bytes > MIN_SIZE);
 
+	const char * const old_strings = strings(st);
+
 	// Determine the number of hash slots
-	int32_t new_hash_slots = 0;
-	if (new_bytes > st->allocated_bytes) {
-		int32_t average_string_length = 
+	int32_t truncated = 0;
+	if (new_bytes >= st->allocated_bytes) {
+		const int32_t average_string_length = 
 			st->count > 16 ? st->strings_bytes / st->count
 			: GUESSED_STRING_LENGTH;
-		new_hash_slots = max_items(new_bytes, average_string_length);
+		st->num_hash_slots = max_items(new_bytes, average_string_length);
+		if (st->num_hash_slots < 1)
+			st->num_hash_slots = 1;
+	} else if (bytes(st->count, st->strings_bytes) <= new_bytes) {
+		st->num_hash_slots = st->count * 100 / MAX_HASH_FILL_RATE;
 	} else {
-		new_hash_slots = st->count * 100 / MAX_HASH_FILL_RATE;
+		truncated = 1;
+
+		// Find out how many strings to include
+		int32_t count = 0;
+		int32_t strings_bytes = 0;
+
+		const char *s = old_strings;
+		while (count < st->count+1) {
+			while (*s)
+				++s;
+			if (bytes(count+1, s-old_strings) > new_bytes)
+				break;
+			++count;
+			strings_bytes = s-old_strings;
+			++s;
+		}
+
+		st->count = count;
+		st->strings_bytes = strings_bytes;
+		st->num_hash_slots = count * 100 / MAX_HASH_FILL_RATE;
 	}
 
-	char *old_strings = strings(st);
 	st->allocated_bytes = new_bytes;
-	st->num_hash_slots = new_hash_slots;
-	char *new_strings = strings(st);
-
-	int32_t max_strings_bytes = (char *)st + st->allocated_bytes - new_strings;
-	assert(max_strings_bytes > 1);
-
-	// Truncate string list if not room for all strings.
-	if (st->strings_bytes > max_strings_bytes) {
-		st->strings_bytes = max_strings_bytes;
-
-		// Make sure string list does not contain half a string.
-		while (old_strings[st->strings_bytes])
-			--st->strings_bytes;
-	}
+	char * const new_strings = strings(st);
 	memmove(new_strings, old_strings, st->strings_bytes);
 
 	// Rebuild hash table
 	memset(hashtable(st), 0, st->num_hash_slots * sizeof(uint32_t));
 
 	const char *s = new_strings;
-	int32_t *ht = hashtable(st);
-	for (int32_t dc=0; dc<st->count; ++dc) {
-		struct HashAndLength hl = compute_hash_and_length(s);
+	int32_t * const ht = hashtable(st);
+	while (s < new_strings + st->strings_bytes) {
+		const struct HashAndLength hl = compute_hash_and_length(s);
 		uint32_t i = hl.hash % st->num_hash_slots;
 		while (ht[i])
 			i = (i + 1) % st->num_hash_slots;
 		ht[i] = s - new_strings;
 		s = s + hl.length + 1;
 	}
+
+	return truncated;
 }
 
 inline int32_t nfst_minimal_size(struct nfst_StringTable *st)
 {
-	int32_t num_hash_slots = st->count * 100 / MAX_HASH_FILL_RATE;
+	const int32_t num_hash_slots = st->count * 100 / MAX_HASH_FILL_RATE;
 	return sizeof(struct nfst_StringTable)
 		+ num_hash_slots * sizeof(int32_t)
 		+ st->strings_bytes;
@@ -215,10 +234,10 @@ inline int32_t nfst_to_symbol(struct nfst_StringTable *st, const char *s)
 	// "" maps to 0
 	if (!*s) return 0;
 
-	struct HashAndLength hl = compute_hash_and_length(s);
+	const struct HashAndLength hl = compute_hash_and_length(s);
 
-	int32_t *ht = hashtable(st);
-	char *strs = strings(st);
+	int32_t * const ht = hashtable(st);
+	char * const strs = strings(st);
 	uint32_t i = hl.hash % st->num_hash_slots;
 	while (ht[i]) {
 		if (strcmp(s, strs + ht[i]) == 0)
@@ -229,11 +248,11 @@ inline int32_t nfst_to_symbol(struct nfst_StringTable *st, const char *s)
 	if ((st->count+1) * 100 / st->num_hash_slots > MAX_HASH_FILL_RATE)
 		return NFST_STRING_TABLE_FULL;
 
-	char *dest = strs + st->strings_bytes;
+	char * const dest = strs + st->strings_bytes;
 	if (dest + hl.length + 1 - (char *)st > st->allocated_bytes)
 		return NFST_STRING_TABLE_FULL;
 
-	int32_t symbol = st->strings_bytes;
+	const uint32_t symbol = st->strings_bytes;
 	ht[i] = symbol;
 	st->count++;
 	memcpy(dest, s, hl.length + 1);
@@ -256,13 +275,23 @@ inline const char *nfst_to_string(struct nfst_StringTable *st, int32_t symbol)
 
 	#define assert_strequal(a,b)	assert(strcmp((a), (b)) == 0)
 
-	struct nfst_StringTable *nfst_realloc(struct nfst_StringTable *old, int32_t bytes)
+	static struct nfst_StringTable *st_realloc(struct nfst_StringTable *st, int32_t bytes, int32_t expect_trunc)
 	{
-		struct nfst_StringTable *st = realloc(old, bytes);
-		if (!old)
+		if (!st) {
+			st = realloc(st, bytes);
 			nfst_init(st, bytes);
-		else if (bytes)
+		} else if (bytes == 0) {
+			free(st);
+			return NULL;
+		} else if (bytes > st->allocated_bytes) {
+			st = realloc(st, bytes);
 			nfst_resize(st, bytes);
+		} else {
+			int truncated = nfst_resize(st, bytes);
+			assert(expect_trunc && truncated || !expect_trunc && !truncated);
+			st = realloc(st, bytes);
+		}
+
 		return st;
 	}
 	
@@ -293,7 +322,7 @@ inline const char *nfst_to_string(struct nfst_StringTable *st, int32_t symbol)
 
 		// Grow test
 		{
-			struct nfst_StringTable * st = nfst_realloc(NULL, 24);
+			struct nfst_StringTable * st = st_realloc(NULL, 24, 0);
 
 			assert(nfst_to_symbol(st, "01234567890123456789") == NFST_STRING_TABLE_FULL);
 
@@ -302,12 +331,14 @@ inline const char *nfst_to_string(struct nfst_StringTable *st, int32_t symbol)
 				sprintf(s, "%i", i);
 				int32_t sym = nfst_to_symbol(st, s);
 				while (sym == NFST_STRING_TABLE_FULL) {
-					st = nfst_realloc(st, st->allocated_bytes*2);
+					st = st_realloc(st, st->allocated_bytes*2, 0);
 					sym = nfst_to_symbol(st, s);
 				}
 				assert_strequal(s, nfst_to_string(st, sym));
 			}
 
+			st = st_realloc(st, nfst_minimal_size(st), 0);
+			
 			for (int32_t i=0; i<10000; ++i) {
 				char s[10];
 				sprintf(s, "%i", i);
@@ -316,8 +347,31 @@ inline const char *nfst_to_string(struct nfst_StringTable *st, int32_t symbol)
 				assert_strequal(s, nfst_to_string(st, sym));
 			}
 
-			nfst_realloc(st, 0);
+			int32_t sym_300 = nfst_to_symbol(st, "300");
+			st = st_realloc(st, 4 * 1024, 1);
+			assert(sym_300 == nfst_to_symbol(st, "300"));
+			
+			st_realloc(st, 0, 1);
 		}
+	}
+
+#endif
+
+#ifdef PROFILER
+
+	int main(int argc, char **argv)
+	{
+		struct nfst_StringTable *st = malloc(128*1024);
+		nfst_init(st, 128*1024);
+
+		srand(0);
+		for (int i=0; i<100000; ++i) {
+			char s[10];
+			sprintf("%i", rand() % 10000);
+			nfst_to_symbol(st, s);
+		}
+
+		printf("Memory use: %i\n", nfst_minimal_size(st));
 	}
 
 #endif
