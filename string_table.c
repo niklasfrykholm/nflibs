@@ -359,18 +359,26 @@ inline const char *nfst_to_string(struct nfst_StringTable *st, int32_t symbol)
 
 #ifdef PROFILER
 
+	#include <stdio.h>
+	#include <stdlib.h>
+	#include <time.h>
+
 	int main(int argc, char **argv)
 	{
 		struct nfst_StringTable *st = malloc(128*1024);
 		nfst_init(st, 128*1024);
 
+		clock_t start = clock();
 		srand(0);
-		for (int i=0; i<100000; ++i) {
+		for (int i=0; i<1000000; ++i) {
 			char s[10];
-			sprintf("%i", rand() % 10000);
+			sprintf(s, "%i", rand() % 10000);
 			nfst_to_symbol(st, s);
 		}
+		clock_t stop = clock();
 
+		float delta = ((double)(stop-start)) / CLOCKS_PER_SEC;
+		printf("Time: %f\n", delta);
 		printf("Memory use: %i\n", nfst_minimal_size(st));
 	}
 
