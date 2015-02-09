@@ -149,6 +149,14 @@ static inline int32_t bytes(int32_t count, int32_t string_bytes)
 	return num_hash_slots * sizeof(uint32_t) + string_bytes;
 }
 
+static inline int32_t strequal(const char *a, const char *b)
+{
+	while (*a && *b && *a == *b) {
+		++a; ++b;
+	}
+	return *a == *b;
+}
+
 // We must have room for at leat one hash slot and one string
 static int32_t MIN_SIZE = sizeof(struct nfst_StringTable) + 1*(uint32_t) + 4;
 
@@ -275,7 +283,7 @@ inline int32_t nfst_to_symbol(struct nfst_StringTable *st, const char *s)
 		uint16_t * const ht = hashtable_16(st);
 		i = hl.hash % st->num_hash_slots;
 		while (ht[i]) {
-			if (strcmp(s, strs + ht[i]) == 0)
+			if (strequal(s, strs + ht[i]))
 				return ht[i];
 			i = (i+1) % st->num_hash_slots;
 		}
@@ -283,7 +291,7 @@ inline int32_t nfst_to_symbol(struct nfst_StringTable *st, const char *s)
 		uint32_t * const ht = hashtable_32(st);
 		i = hl.hash % st->num_hash_slots;
 		while (ht[i]) {
-			if (strcmp(s, strs + ht[i]) == 0)
+			if (strequal(s, strs + ht[i]))
 				return ht[i];
 			i = (i+1) % st->num_hash_slots;
 		}
@@ -320,7 +328,7 @@ inline const char *nfst_to_string(struct nfst_StringTable *st, int32_t symbol)
 	#include <assert.h>
 	#include <stdlib.h>
 
-	#define assert_strequal(a,b)	assert(strcmp((a), (b)) == 0)
+	#define assert_strequal(a,b)	assert(strequal((a), (b)))
 
 	static struct nfst_StringTable *st_realloc(struct nfst_StringTable *st, int32_t bytes, int32_t expect_trunc)
 	{
@@ -421,7 +429,7 @@ inline const char *nfst_to_string(struct nfst_StringTable *st, int32_t symbol)
 
 		clock_t start = clock();
 		srand(0);
-		for (int i=0; i<1000000; ++i)
+		for (int i=0; i<10000000; ++i)
 			nfst_to_symbol(st, s[rand() % 10000]);
 		clock_t stop = clock();
 
