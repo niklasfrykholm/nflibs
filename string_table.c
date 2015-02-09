@@ -14,8 +14,6 @@
 //
 // ## To Do
 //
-// * Performance test
-// * Use 16 bit hash table when allocated_bytes < 64 K.
 // * Four byte align strings for strcmp & hash performance?
 // * Store hashes for faster rehashing?
 // * Packing function that optimizes seed for minimal collisions
@@ -112,20 +110,32 @@ static inline struct HashAndLength compute_hash_and_length(const char *start)
 	return result;
 }
 
-static inline int32_t *hashtable(struct nfst_StringTable *st)
+static inline uint16_t *hashtable_16(struct nfst_StringTable *st)
 {
-	return (int32_t *)(st + 1);
+	return (uint16_t *)(st + 1);
+}
+
+static inline uint32_t *hashtable_32(struct nfst_StringTable *st)
+{
+	return (uint32_t *)(st + 1);
+}
+
+static inline int hash_item_size(int32_t bytes)
+{
+	return bytes > 64*1024 ? sizeof(uint32_t) : sizeof(uint16_t);
 }
 
 static inline char *strings(struct nfst_StringTable *st)
 {
-	return (char *)(hashtable(st) + st->num_hash_slots);
+	return hash_item_size(st->allocated_bytes) == 2 ?
+		 (char *)(hashtable_16(st) + st->num_hash_slots) :
+		 (char *)(hashtable_32(st) + st->num_hash_slots);
 }
 
 static inline int32_t max_items(int32_t bytes, int32_t average_string_length)
 {
 	const int32_t data_bytes = bytes - sizeof(struct nfst_StringTable);
-	const int32_t item_size_10 = sizeof(uint32_t) * 10 * 100 / MAX_HASH_FILL_RATE + 10 * average_string_length;
+	const int32_t item_size_10 = hash_item_size(bytes) * 10 * 100 / MAX_HASH_FILL_RATE + 10 * average_string_length;
 	const int32_t result = data_bytes * 10 / item_size_10;
 	return result;
 }
@@ -133,6 +143,9 @@ static inline int32_t max_items(int32_t bytes, int32_t average_string_length)
 static inline int32_t bytes(int32_t count, int32_t string_bytes)
 {
 	const int32_t num_hash_slots = count * 100 / MAX_HASH_FILL_RATE;
+	const int32_t size_16 = num_hash_slots * sizeof(uint16_t) + string_bytes;
+	if (size_16 <= 64 * 1024)
+		return size_16;
 	return num_hash_slots * sizeof(uint32_t) + string_bytes;
 }
 
@@ -151,7 +164,7 @@ inline void nfst_init(struct nfst_StringTable *st, int32_t bytes)
 	// for it to avoid division by zero errors everywhere.
 	if (st->num_hash_slots < 1)
 		st->num_hash_slots = 1;
-	memset(hashtable(st), 0, st->num_hash_slots * sizeof(uint32_t));
+	memset(hashtable_16(st), 0, st->num_hash_slots * hash_item_size(bytes));
 
 	// Empty string is stored at index 0. This way, we can use 0 as a marker for
 	// empty hash slots.
@@ -205,17 +218,32 @@ int nfst_resize(struct nfst_StringTable *st, int32_t new_bytes)
 	memmove(new_strings, old_strings, st->strings_bytes);
 
 	// Rebuild hash table
-	memset(hashtable(st), 0, st->num_hash_slots * sizeof(uint32_t));
-
+	
 	const char *s = new_strings;
-	int32_t * const ht = hashtable(st);
-	while (s < new_strings + st->strings_bytes) {
-		const struct HashAndLength hl = compute_hash_and_length(s);
-		uint32_t i = hl.hash % st->num_hash_slots;
-		while (ht[i])
-			i = (i + 1) % st->num_hash_slots;
-		ht[i] = s - new_strings;
-		s = s + hl.length + 1;
+	if (hash_item_size(new_bytes) == 2) {
+		memset(hashtable_16(st), 0, st->num_hash_slots * sizeof(uint16_t));
+
+		uint16_t * const ht = hashtable_16(st);
+		while (s < new_strings + st->strings_bytes) {
+			const struct HashAndLength hl = compute_hash_and_length(s);
+			uint32_t i = hl.hash % st->num_hash_slots;
+			while (ht[i])
+				i = (i + 1) % st->num_hash_slots;
+			ht[i] = s - new_strings;
+			s = s + hl.length + 1;
+		}
+	} else {
+		memset(hashtable_32(st), 0, st->num_hash_slots * sizeof(uint32_t));
+
+		uint32_t * const ht = hashtable_32(st);
+		while (s < new_strings + st->strings_bytes) {
+			const struct HashAndLength hl = compute_hash_and_length(s);
+			uint32_t i = hl.hash % st->num_hash_slots;
+			while (ht[i])
+				i = (i + 1) % st->num_hash_slots;
+			ht[i] = s - new_strings;
+			s = s + hl.length + 1;
+		}
 	}
 
 	return truncated;
@@ -224,8 +252,13 @@ int nfst_resize(struct nfst_StringTable *st, int32_t new_bytes)
 inline int32_t nfst_minimal_size(struct nfst_StringTable *st)
 {
 	const int32_t num_hash_slots = st->count * 100 / MAX_HASH_FILL_RATE;
+	const int32_t size_16 = sizeof(struct nfst_StringTable)
+		+ num_hash_slots * sizeof(uint16_t)
+		+ st->strings_bytes;
+	if (size_16 <= 64*1024)
+		return size_16;
 	return sizeof(struct nfst_StringTable)
-		+ num_hash_slots * sizeof(int32_t)
+		+ num_hash_slots * sizeof(uint32_t)
 		+ st->strings_bytes;
 }
 
@@ -235,14 +268,25 @@ inline int32_t nfst_to_symbol(struct nfst_StringTable *st, const char *s)
 	if (!*s) return 0;
 
 	const struct HashAndLength hl = compute_hash_and_length(s);
-
-	int32_t * const ht = hashtable(st);
 	char * const strs = strings(st);
-	uint32_t i = hl.hash % st->num_hash_slots;
-	while (ht[i]) {
-		if (strcmp(s, strs + ht[i]) == 0)
-			return ht[i];
-		i = (i+1) % st->num_hash_slots;
+		
+	uint32_t i = 0;
+	if (hash_item_size(st->allocated_bytes) == 2) {
+		uint16_t * const ht = hashtable_16(st);
+		i = hl.hash % st->num_hash_slots;
+		while (ht[i]) {
+			if (strcmp(s, strs + ht[i]) == 0)
+				return ht[i];
+			i = (i+1) % st->num_hash_slots;
+		}
+	} else {
+		uint32_t * const ht = hashtable_32(st);
+		i = hl.hash % st->num_hash_slots;
+		while (ht[i]) {
+			if (strcmp(s, strs + ht[i]) == 0)
+				return ht[i];
+			i = (i+1) % st->num_hash_slots;
+		}
 	}
 
 	if ((st->count+1) * 100 / st->num_hash_slots > MAX_HASH_FILL_RATE)
@@ -253,7 +297,10 @@ inline int32_t nfst_to_symbol(struct nfst_StringTable *st, const char *s)
 		return NFST_STRING_TABLE_FULL;
 
 	const uint32_t symbol = st->strings_bytes;
-	ht[i] = symbol;
+	if (hash_item_size(st->allocated_bytes) == 2)
+		hashtable_16(st)[i] = symbol;
+	else
+		hashtable_32(st)[i] = symbol;
 	st->count++;
 	memcpy(dest, s, hl.length + 1);
 	st->strings_bytes += hl.length + 1;
@@ -368,13 +415,14 @@ inline const char *nfst_to_string(struct nfst_StringTable *st, int32_t symbol)
 		struct nfst_StringTable *st = malloc(128*1024);
 		nfst_init(st, 128*1024);
 
+		char s[10000][5];
+		for (int i=0; i<10000; ++i)
+			sprintf(s[i], "%i", i);
+
 		clock_t start = clock();
 		srand(0);
-		for (int i=0; i<1000000; ++i) {
-			char s[10];
-			sprintf(s, "%i", rand() % 10000);
-			nfst_to_symbol(st, s);
-		}
+		for (int i=0; i<1000000; ++i)
+			nfst_to_symbol(st, s[rand() % 10000]);
 		clock_t stop = clock();
 
 		float delta = ((double)(stop-start)) / CLOCKS_PER_SEC;
