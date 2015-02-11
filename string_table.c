@@ -32,7 +32,7 @@ struct nfst_StringTable;
 
 void nfst_init(struct nfst_StringTable *st, int32_t bytes, int32_t average_string_size);
 void nfst_grow(struct nfst_StringTable *st, int32_t bytes);
-int32_t nfst_pack(struct nfst_StringTable *st);
+int32_t  nfst_pack(struct nfst_StringTable *st);
 int32_t nfst_to_symbol(struct nfst_StringTable *st, const char *s);
 const char *nfst_to_string(struct nfst_StringTable *, int32_t symbol);
 
@@ -59,6 +59,7 @@ static inline uint16_t *hashtable_16(struct nfst_StringTable *st);
 static inline uint32_t *hashtable_32(struct nfst_StringTable *st);
 static inline char *strings(struct nfst_StringTable *st);
 static inline int32_t available_string_bytes(struct nfst_StringTable *st);
+static void rebuild_hash_table(struct nfst_StringTable *st);
 
 // Structure representing a string table. The data for the table is stored
 // directly after this header in memory and consists of a hash table
@@ -108,6 +109,9 @@ void nfst_init(struct nfst_StringTable *st, int32_t bytes, int32_t average_strle
 	st->string_bytes = 1;
 }
 
+// Grows the string table to size `bytes`. You must make sure that this many
+// bytes are available in the pointer `st` (typically by calling realloc before
+// calling this function).
 void nfst_grow(struct nfst_StringTable *st, int32_t bytes)
 {
 	assert(bytes >= st->allocated_bytes);
@@ -127,34 +131,29 @@ void nfst_grow(struct nfst_StringTable *st, int32_t bytes)
 
 	char * const new_strings = strings(st);
 	memmove(new_strings, old_strings, st->string_bytes);
+	rebuild_hash_table(st);
+}
 
-	// Rebuild hash table
-	const char *s = new_strings + 2;
-	if (st->uses_16_bit_hash_slots) {
-		memset(hashtable_16(st), 0, st->num_hash_slots * sizeof(uint16_t));
+// Packs the string table so that it uses as little memory as possible while
+// still preserving the content. Updates st->allocated_bytes and returns the
+// new value. You can use that to shrink the buffer with realloc() if so desired.
+int32_t nfst_pack(struct nfst_StringTable *st)
+{
+	const char *old_strings = strings(st);
 
-		uint16_t * const ht = hashtable_16(st);
-		while (s < new_strings + st->string_bytes) {
-			const struct HashAndLength hl = hash_and_length(s);
-			uint32_t i = hl.hash % st->num_hash_slots;
-			while (ht[i])
-				i = (i + 1) % st->num_hash_slots;
-			ht[i] = s - new_strings;
-			s = s + hl.length + 1;
-		}
-	} else {
-		memset(hashtable_32(st), 0, st->num_hash_slots * sizeof(uint32_t));
+	st->num_hash_slots = st->count * HASH_FACTOR;
+	if (st->num_hash_slots < 1)
+		st->num_hash_slots = 1;
+	if (st->num_hash_slots < st->count + 1)
+		st->num_hash_slots = st->count + 1;
+	st->uses_16_bit_hash_slots = st->string_bytes <= 64*1024;
 
-		uint32_t * const ht = hashtable_32(st);
-		while (s < new_strings + st->string_bytes) {
-			const struct HashAndLength hl = hash_and_length(s);
-			uint32_t i = hl.hash % st->num_hash_slots;
-			while (ht[i])
-				i = (i + 1) % st->num_hash_slots;
-			ht[i] = s - new_strings;
-			s = s + hl.length + 1;
-		}
-	}
+	char * const new_strings = strings(st);
+	memmove(new_strings, old_strings, st->string_bytes);
+	rebuild_hash_table(st);
+
+	st->allocated_bytes = (new_strings + st->string_bytes) - (char *)st;
+	return st->allocated_bytes;
 }
 
 // Returns the symbol for the string `s`. If `s` is not already in the table,
@@ -261,6 +260,37 @@ static inline int32_t available_string_bytes(struct nfst_StringTable *st)
 		st->allocated_bytes - sizeof(*st) - st->num_hash_slots * sizeof(uint32_t);
 }
 
+static void rebuild_hash_table(struct nfst_StringTable *st)
+{
+	const char *strs = strings(st);
+	const char *s = strs + 1;
+	if (st->uses_16_bit_hash_slots) {
+		memset(hashtable_16(st), 0, st->num_hash_slots * sizeof(uint16_t));
+
+		uint16_t * const ht = hashtable_16(st);
+		while (s < strs + st->string_bytes) {
+			const struct HashAndLength hl = hash_and_length(s);
+			uint32_t i = hl.hash % st->num_hash_slots;
+			while (ht[i])
+				i = (i + 1) % st->num_hash_slots;
+			ht[i] = s - strs;
+			s = s + hl.length + 1;
+		}
+	} else {
+		memset(hashtable_32(st), 0, st->num_hash_slots * sizeof(uint32_t));
+
+		uint32_t * const ht = hashtable_32(st);
+		while (s < strs + st->string_bytes) {
+			const struct HashAndLength hl = hash_and_length(s);
+			uint32_t i = hl.hash % st->num_hash_slots;
+			while (ht[i])
+				i = (i + 1) % st->num_hash_slots;
+			ht[i] = s - strs;
+			s = s + hl.length + 1;
+		}
+	}
+}
+
 // ## Unit Test
 
 #ifdef UNIT_TEST
@@ -321,7 +351,8 @@ static inline int32_t available_string_bytes(struct nfst_StringTable *st)
 				assert_strequal(s, nfst_to_string(st, sym));
 			}
 
-			// Pack: st = st_realloc(st, nfst_minimal_size(st), 0);
+			nfst_pack(st);
+			st = realloc(st, st->allocated_bytes);
 			
 			for (int32_t i=0; i<10000; ++i) {
 				char s[10];
@@ -354,13 +385,16 @@ static inline int32_t available_string_bytes(struct nfst_StringTable *st)
 
 		clock_t start = clock();
 		srand(0);
-		for (int i=0; i<10000000; ++i)
-			nfst_to_symbol(st, s[rand() % 10000]);
+		for (int i=0; i<10000000; ++i) {
+			int32_t sym = nfst_to_symbol(st, s[rand() % 10000]);
+			assert(sym >= 0);
+		}
 		clock_t stop = clock();
 
 		float delta = ((double)(stop-start)) / CLOCKS_PER_SEC;
 		printf("Time: %f\n", delta);
 		printf("Memory use: %i\n", st->allocated_bytes);
+		printf("16 bit: %i\n", st->uses_16_bit_hash_slots);
 	}
 
 #endif
