@@ -293,7 +293,7 @@ static void rebuild_hash_table(struct nfst_StringTable *st)
 
 // ## Unit Test
 
-#ifdef UNIT_TEST
+#ifdef NFST_UNIT_TEST
 
 	#include <stdio.h>
 	#include <assert.h>
@@ -368,7 +368,7 @@ static void rebuild_hash_table(struct nfst_StringTable *st)
 
 #endif
 
-#ifdef PROFILER
+#ifdef NFST_PERFORMANCE_TEST
 
 	#include <stdio.h>
 	#include <stdlib.h>

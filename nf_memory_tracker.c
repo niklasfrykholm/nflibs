@@ -168,7 +168,6 @@ static inline void write(const void *data, int32_t size)
 		nfmt_record_malloc(0, 1024, "test", __FILE__, __LINE__);
 		nfmt_record_free(0);
 		struct nfmt_Buffer b = nfmt_read();
-		printf("%i\n", (int32_t)(b.end - b.start));
 	}
 
 #endif
