@@ -4,13 +4,16 @@ struct nfcd_ConfigData;
 
 enum {
 	NFCD_TYPE_NIL, NFCD_TYPE_FALSE, NFCD_TYPE_TRUE, NFCD_TYPE_NUMBER, NFCD_TYPE_STRING,
-	NFCD_TYPE_ARRAY, NFCD_TYPE_OBJECT,
+	NFCD_TYPE_ARRAY, NFCD_TYPE_OBJECT
 };
 
-typedef int32_t nfcd_loc;
+#define NFCD_TYPE_MASK (0x7)
+#define NFCD_TYPE_BITS (3)
+
+typedef uint32_t nfcd_loc;
 typedef void * (*nfcd_realloc) (void *ud, void *ptr, int32_t osize, int32_t nsize, const char *file, int32_t line);
 
-struct nfcd_ConfigData *nfcd_make(int32_t size, nfcd_realloc realloc, void *ud);
+struct nfcd_ConfigData *nfcd_make(nfcd_realloc realloc, void *ud, int32_t config_size, int32_t stringtable_size);
 
 nfcd_loc nfcd_root(struct nfcd_ConfigData *cd);
 int32_t nfcd_type(struct nfcd_ConfigData *cd, nfcd_loc loc);
@@ -38,6 +41,9 @@ void nfcd_set_object_value(struct nfcd_ConfigData *cd, nfcd_loc object, const ch
 
 // IMPLEMENTATION
 
+struct nfst_StringTable;
+void nfst_init(struct nfst_StringTable *st, int32_t bytes, int32_t average_string_size);
+
 // nfcd_loc encodes type and offset into data
 // array:  [size allocated loc...]
 // object: [size allocated keys... values...]
@@ -46,20 +52,36 @@ struct nfcd_ConfigData
 {
 	int32_t allocated_bytes;
 	struct nfst_StringTable *string_table;
+	nfcd_loc root;
 };
 
-struct nfcd_ConfigData *nfcd_make(int32_t size, nfcd_realloc realloc, void *ud)
+struct nfcd_ConfigData *nfcd_make(nfcd_realloc realloc, void *ud, int32_t config_size, int32_t stringtable_size)
 {
-	if (!size)
-		size = 16*1024;
+	if (!config_size)
+		config_size = 8*1024;
+	if (!stringtable_size)
+		stringtable_size = 8*1024;
 
-	struct nfcd_ConfigData *cd = realloc(ud, 0, 0, size/2, __FILE__, __LINE__);
-	struct nfst_StringTable *st = realloc(ud, 0, 0, size/2, __FILE__, __LINE__);
+	struct nfcd_ConfigData *cd = realloc(ud, 0, 0, config_size, __FILE__, __LINE__);
+	struct nfst_StringTable *st = realloc(ud, 0, 0, stringtable_size, __FILE__, __LINE__);
 
-	cd->allocated_bytes = size/2;
+	cd->allocated_bytes = config_size;
 	cd->string_table = st;
+	cd->root = NFCD_TYPE_NIL;
+
+	nfst_init(st, stringtable_size, 15);
 
 	return cd;
+}
+
+nfcd_loc nfcd_root(struct nfcd_ConfigData *cd)
+{
+	return cd->root;
+}
+
+int32_t nfcd_type(struct nfcd_ConfigData *cd, nfcd_loc loc)
+{
+	return (loc & NFCD_TYPE_MASK);
 }
 
 #ifdef NFCD_UNIT_TEST
@@ -74,7 +96,7 @@ struct nfcd_ConfigData *nfcd_make(int32_t size, nfcd_realloc realloc, void *ud)
 
 	int main(int argc, char **argv)
 	{
-		struct nfcd_ConfigData *cd = nfcd_make(0, realloc_f, 0);
+		struct nfcd_ConfigData *cd = nfcd_make(realloc_f, 0, 0, 0);
 	}
 
 #endif
