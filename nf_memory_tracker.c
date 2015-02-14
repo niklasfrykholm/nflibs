@@ -10,7 +10,7 @@ struct nfmt_Buffer {
 };
 
 void nfmt_init();
-void nfmt_record_malloc(void *p, uint32_t size, const char *tag, const char *file, int32_t line);
+void nfmt_record_malloc(void *p, int size, const char *tag, const char *file, int line);
 void nfmt_record_free(void *p);
 struct nfmt_Buffer nfmt_read();
 
@@ -20,14 +20,14 @@ struct nfmt_Buffer nfmt_read();
 
 struct nfst_StringTable
 {
-    int32_t allocated_bytes;
-    int32_t count;
-    int32_t uses_16_bit_hash_slots;
-    int32_t num_hash_slots;
-    int32_t string_bytes;
+    int allocated_bytes;
+    int count;
+    int uses_16_bit_hash_slots;
+    int num_hash_slots;
+    int string_bytes;
 };
-void nfst_init(struct nfst_StringTable *st, int32_t bytes, int32_t average_string_size);
-int32_t nfst_to_symbol(struct nfst_StringTable *st, const char *s);
+void nfst_init(struct nfst_StringTable *st, int bytes, int average_string_size);
+int nfst_to_symbol(struct nfst_StringTable *st, const char *s);
 
 #define STREAM_SIZE (16*1024)
 #define STRING_TABLE_SIZE (2*1024)
@@ -39,22 +39,22 @@ enum {RECORD_TYPE_MALLOC, RECORD_TYPE_FREE, RECORD_TYPE_SYMBOL, RECORD_TYPE_OUT_
 struct Stream
 {
 	uint8_t buffer[STREAM_SIZE];
-	int32_t start;
-	int32_t size;
+	int start;
+	int size;
 };
 
 struct MallocRecord
 {
 	void *p;
-	uint32_t size;
-	int32_t tag_sym;
-	int32_t file_sym;
-	int32_t line;
+	int size;
+	int tag_sym;
+	int file_sym;
+	int line;
 };
 
-static inline int32_t to_symbol(const char *s);
-static void record(int32_t type, const void *data_1, int32_t size_1, const void *data_2, int32_t size_2);
-static inline void write(const void * data, int32_t size);
+static inline int to_symbol(const char *s);
+static void record(int type, const void *data_1, int size_1, const void *data_2, int size_2);
+static inline void write(const void * data, int size);
 
 static char string_table_buffer[STRING_TABLE_SIZE];
 static struct Stream stream;
@@ -69,7 +69,7 @@ void nfmt_init()
 }
 
 // Records data for a malloc operation
-void nfmt_record_malloc(void *p, uint32_t size, const char *tag, const char *file, int32_t line)
+void nfmt_record_malloc(void *p, int size, const char *tag, const char *file, int line)
 {
 	struct MallocRecord mr;
 	mr.p = p;
@@ -92,17 +92,17 @@ struct nfmt_Buffer nfmt_read()
 {
 	struct nfmt_Buffer b;
 	b.start = stream.buffer + stream.start;
-	int32_t count = MIN(stream.start + stream.size, STREAM_SIZE) - stream.start;
+	int count = MIN(stream.start + stream.size, STREAM_SIZE) - stream.start;
 	b.end = b.start + count;
 	stream.start = (stream.start + count) % STREAM_SIZE;
 	stream.size -= count;
 	return b;
 }
 
-static inline int32_t to_symbol(const char *s)
+static inline int to_symbol(const char *s)
 {
-	int32_t before_count = strings->count;
-	int32_t sym = nfst_to_symbol(strings, s);
+	int before_count = strings->count;
+	int sym = nfst_to_symbol(strings, s);
 	
 	// New symbol, add it to the stream.
 	if (strings->count > before_count)
@@ -112,7 +112,7 @@ static inline int32_t to_symbol(const char *s)
 }
 
 
-static void record(int32_t type, const void *data_1, int32_t size_1, const void *data_2, int32_t size_2)
+static void record(int type, const void *data_1, int size_1, const void *data_2, int size_2)
 {
 	// If we don't have enough memory to record the message, record an OUT_OF_MEMORY message
 	// instead. (The extra sizeof(type) is there because otherwise we wouldn't be able to
@@ -138,10 +138,10 @@ static void record(int32_t type, const void *data_1, int32_t size_1, const void 
 	write(data_2, size_2);
 }
 
-static inline void write(const void *data, int32_t size)
+static inline void write(const void *data, int size)
 {
 	const char *p = data;
-	int32_t size_1 = MIN(STREAM_SIZE - stream.start, size);
+	int size_1 = MIN(STREAM_SIZE - stream.start, size);
 	memcpy(stream.buffer + stream.start, p, size_1);
 	stream.start = (stream.start + size_1) % STREAM_SIZE;
 	stream.size += size_1;

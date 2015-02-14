@@ -1,5 +1,3 @@
-#include <stdint.h>
-
 struct nfcd_ConfigData;
 
 enum {
@@ -10,39 +8,39 @@ enum {
 #define NFCD_TYPE_MASK (0x7)
 #define NFCD_TYPE_BITS (3)
 
-typedef uint32_t nfcd_loc;
-typedef void * (*nfcd_realloc) (void *ud, void *ptr, int32_t osize, int32_t nsize, const char *file, int32_t line);
+typedef int nfcd_loc;
+typedef void * (*nfcd_realloc) (void *ud, void *ptr, int osize, int nsize, const char *file, int line);
 
-struct nfcd_ConfigData *nfcd_make(nfcd_realloc realloc, void *ud, int32_t config_size, int32_t stringtable_size);
+struct nfcd_ConfigData *nfcd_make(nfcd_realloc realloc, void *ud, int config_size, int stringtable_size);
 
 nfcd_loc nfcd_root(struct nfcd_ConfigData *cd);
-int32_t nfcd_type(struct nfcd_ConfigData *cd, nfcd_loc loc);
+int nfcd_type(struct nfcd_ConfigData *cd, nfcd_loc loc);
 double nfcd_to_number(struct nfcd_ConfigData *cd, nfcd_loc loc);
 const char *nfcd_to_string(struct nfcd_ConfigData *cd, nfcd_loc loc);
 
-int32_t nfcd_array_size(struct nfcd_ConfigData *cd, nfcd_loc loc);
-nfcd_loc nfcd_array_element(struct nfcd_ConfigData *cd, int32_t i);
+int nfcd_array_size(struct nfcd_ConfigData *cd, nfcd_loc loc);
+nfcd_loc nfcd_array_element(struct nfcd_ConfigData *cd, int i);
 
-int32_t nfcd_object_size(struct nfcd_ConfigData *cd, nfcd_loc loc);
-nfcd_loc nfcd_object_key(struct nfcd_ConfigData *cd, int32_t i);
-nfcd_loc nfcd_object_value(struct nfcd_ConfigData *cd, int32_t i);
+int nfcd_object_size(struct nfcd_ConfigData *cd, nfcd_loc loc);
+nfcd_loc nfcd_object_key(struct nfcd_ConfigData *cd, int i);
+nfcd_loc nfcd_object_value(struct nfcd_ConfigData *cd, int i);
 nfcd_loc nfcd_object_lookup(struct nfcd_ConfigData *cd, const char *key);
 
 nfcd_loc nfcd_add_false(struct nfcd_ConfigData *cd);
 nfcd_loc nfcd_add_true(struct nfcd_ConfigData *cd);
 nfcd_loc nfcd_add_string(struct nfcd_ConfigData *cd, const char *s);
 nfcd_loc nfcd_add_number(struct nfcd_ConfigData *cd, double n);
-nfcd_loc nfcd_add_array(struct nfcd_ConfigData *cd, int32_t size, nfcd_loc *data);
-nfcd_loc nfcd_add_object(struct nfcd_ConfigData *cd, int32_t size, nfcd_loc *keys, nfcd_loc *values);
+nfcd_loc nfcd_add_array(struct nfcd_ConfigData *cd, int size, nfcd_loc *data);
+nfcd_loc nfcd_add_object(struct nfcd_ConfigData *cd, int size, nfcd_loc *keys, nfcd_loc *values);
 void nfcd_set_root(struct nfcd_ConfigData *cd, nfcd_loc root);
 
-void nfcd_set_array_item(struct nfcd_ConfigData *cd, nfcd_loc array, int32_t index, nfcd_loc item);
+void nfcd_set_array_item(struct nfcd_ConfigData *cd, nfcd_loc array, int index, nfcd_loc item);
 void nfcd_set_object_value(struct nfcd_ConfigData *cd, nfcd_loc object, const char *key, nfcd_loc value);
 
 // IMPLEMENTATION
 
 struct nfst_StringTable;
-void nfst_init(struct nfst_StringTable *st, int32_t bytes, int32_t average_string_size);
+void nfst_init(struct nfst_StringTable *st, int bytes, int average_string_size);
 
 // nfcd_loc encodes type and offset into data
 // array:  [size allocated loc...]
@@ -50,12 +48,12 @@ void nfst_init(struct nfst_StringTable *st, int32_t bytes, int32_t average_strin
 
 struct nfcd_ConfigData
 {
-	int32_t allocated_bytes;
+	int allocated_bytes;
 	struct nfst_StringTable *string_table;
 	nfcd_loc root;
 };
 
-struct nfcd_ConfigData *nfcd_make(nfcd_realloc realloc, void *ud, int32_t config_size, int32_t stringtable_size)
+struct nfcd_ConfigData *nfcd_make(nfcd_realloc realloc, void *ud, int config_size, int stringtable_size)
 {
 	if (!config_size)
 		config_size = 8*1024;
@@ -79,7 +77,7 @@ nfcd_loc nfcd_root(struct nfcd_ConfigData *cd)
 	return cd->root;
 }
 
-int32_t nfcd_type(struct nfcd_ConfigData *cd, nfcd_loc loc)
+int nfcd_type(struct nfcd_ConfigData *cd, nfcd_loc loc)
 {
 	return (loc & NFCD_TYPE_MASK);
 }
@@ -88,7 +86,7 @@ int32_t nfcd_type(struct nfcd_ConfigData *cd, nfcd_loc loc)
 
 	#include <stdlib.h>
 
-	static void *realloc_f(void *ud, void *ptr, int32_t osize, int32_t nsize, const char *file, int32_t line)
+	static void *realloc_f(void *ud, void *ptr, int osize, int nsize, const char *file, int line)
 	{
 		return realloc(ptr, nsize);
 	}

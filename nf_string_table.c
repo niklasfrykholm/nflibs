@@ -1,7 +1,7 @@
 // # String Table
 //
 // This file implements a string table for *string interning*, i.e. converting
-// back and forth between *strings* and `int32_t` representations which we call
+// back and forth between *strings* and `int` representations which we call
 // *symbols*. This can be used to compress data structures containing repeated
 // strings.
 //
@@ -30,11 +30,11 @@
 
 struct nfst_StringTable;
 
-void nfst_init(struct nfst_StringTable *st, int32_t bytes, int32_t average_string_size);
-void nfst_grow(struct nfst_StringTable *st, int32_t bytes);
-int32_t  nfst_pack(struct nfst_StringTable *st);
-int32_t nfst_to_symbol(struct nfst_StringTable *st, const char *s);
-const char *nfst_to_string(struct nfst_StringTable *, int32_t symbol);
+void nfst_init(struct nfst_StringTable *st, int bytes, int average_string_size);
+void nfst_grow(struct nfst_StringTable *st, int bytes);
+int  nfst_pack(struct nfst_StringTable *st);
+int nfst_to_symbol(struct nfst_StringTable *st, const char *s);
+const char *nfst_to_string(struct nfst_StringTable *, int symbol);
 
 // ## Implementation
 
@@ -51,14 +51,14 @@ const char *nfst_to_string(struct nfst_StringTable *, int32_t symbol);
 struct HashAndLength
 {
 	uint32_t hash;
-	uint32_t length;
+	int length;
 };
 
 static inline struct HashAndLength hash_and_length(const char *start);
 static inline uint16_t *hashtable_16(struct nfst_StringTable *st);
 static inline uint32_t *hashtable_32(struct nfst_StringTable *st);
 static inline char *strings(struct nfst_StringTable *st);
-static inline int32_t available_string_bytes(struct nfst_StringTable *st);
+static inline int available_string_bytes(struct nfst_StringTable *st);
 static void rebuild_hash_table(struct nfst_StringTable *st);
 
 // Structure representing a string table. The data for the table is stored
@@ -67,25 +67,25 @@ static void rebuild_hash_table(struct nfst_StringTable *st);
 struct nfst_StringTable
 {
 	// The total size of the allocated data, including this header.
-    int32_t allocated_bytes;
+    int allocated_bytes;
 
     // The number of strings in the table.
-    int32_t count;
+    int count;
 
     // Does the hash table use 16 bit slots
-    int32_t uses_16_bit_hash_slots;
+    int uses_16_bit_hash_slots;
 
     // Total number of slots in the hash table.
-    int32_t num_hash_slots;
+    int num_hash_slots;
 
     // The current number of bytes used for string data.
-    int32_t string_bytes;
+    int string_bytes;
 };
 
 // Initializes an empty string table in the specified memory area. `bytes` is
 // the total ammount of memory allocated at the pointer and `average_strlen` is
 // the expected average length of the strings that will be added.
-void nfst_init(struct nfst_StringTable *st, int32_t bytes, int32_t average_strlen)
+void nfst_init(struct nfst_StringTable *st, int bytes, int average_strlen)
 {
 	assert(bytes >= MIN_SIZE);
 
@@ -96,8 +96,8 @@ void nfst_init(struct nfst_StringTable *st, int32_t bytes, int32_t average_strle
 	float num_strings = (bytes - sizeof(*st)) / bytes_per_string;
 	st->num_hash_slots = MAX(num_strings * HASH_FACTOR, 1);
 
-	int32_t bytes_for_strings_16 = bytes - sizeof(*st) - sizeof(uint16_t) * st->num_hash_slots;
-	int32_t bytes_for_strings_32 = bytes - sizeof(*st) - sizeof(uint32_t) * st->num_hash_slots;
+	int bytes_for_strings_16 = bytes - sizeof(*st) - sizeof(uint16_t) * st->num_hash_slots;
+	int bytes_for_strings_32 = bytes - sizeof(*st) - sizeof(uint32_t) * st->num_hash_slots;
 	st->uses_16_bit_hash_slots = bytes_for_strings_32 <= 64 * 1024;
 
 	memset(hashtable_16(st), 0, st->num_hash_slots * 
@@ -112,7 +112,7 @@ void nfst_init(struct nfst_StringTable *st, int32_t bytes, int32_t average_strle
 // Grows the string table to size `bytes`. You must make sure that this many
 // bytes are available in the pointer `st` (typically by calling realloc before
 // calling this function).
-void nfst_grow(struct nfst_StringTable *st, int32_t bytes)
+void nfst_grow(struct nfst_StringTable *st, int bytes)
 {
 	assert(bytes >= st->allocated_bytes);
 
@@ -125,8 +125,8 @@ void nfst_grow(struct nfst_StringTable *st, int32_t bytes)
 	float num_strings = (bytes - sizeof(*st)) / bytes_per_string;
 	st->num_hash_slots = MAX(num_strings * HASH_FACTOR, st->num_hash_slots);
 
-	int32_t bytes_for_strings_16 = bytes - sizeof(*st) - sizeof(uint16_t) * st->num_hash_slots;
-	int32_t bytes_for_strings_32 = bytes - sizeof(*st) - sizeof(uint32_t) * st->num_hash_slots;
+	int bytes_for_strings_16 = bytes - sizeof(*st) - sizeof(uint16_t) * st->num_hash_slots;
+	int bytes_for_strings_32 = bytes - sizeof(*st) - sizeof(uint32_t) * st->num_hash_slots;
 	st->uses_16_bit_hash_slots = bytes_for_strings_32 <= 64*1024;
 
 	char * const new_strings = strings(st);
@@ -137,7 +137,7 @@ void nfst_grow(struct nfst_StringTable *st, int32_t bytes)
 // Packs the string table so that it uses as little memory as possible while
 // still preserving the content. Updates st->allocated_bytes and returns the
 // new value. You can use that to shrink the buffer with realloc() if so desired.
-int32_t nfst_pack(struct nfst_StringTable *st)
+int nfst_pack(struct nfst_StringTable *st)
 {
 	const char *old_strings = strings(st);
 
@@ -161,7 +161,7 @@ int32_t nfst_pack(struct nfst_StringTable *st)
 // returns `NFST_STRING_TABLE_FULL`.
 //
 // The empty string is guaranteed to have the symbol `0`.
-int32_t nfst_to_symbol(struct nfst_StringTable *st, const char *s)
+int nfst_to_symbol(struct nfst_StringTable *st, const char *s)
 {
 	// "" maps to 0
 	if (!*s) return 0;
@@ -169,7 +169,7 @@ int32_t nfst_to_symbol(struct nfst_StringTable *st, const char *s)
 	const struct HashAndLength hl = hash_and_length(s);
 	char * const strs = strings(st);
 		
-	uint32_t i = 0;
+	int i = 0;
 	if (st->uses_16_bit_hash_slots) {
 		uint16_t * const ht = hashtable_16(st);
 		i = hl.hash % st->num_hash_slots;
@@ -198,7 +198,7 @@ int32_t nfst_to_symbol(struct nfst_StringTable *st, const char *s)
 	if (st->string_bytes + hl.length + 1 > available_string_bytes(st))
 		return NFST_STRING_TABLE_FULL;
 
-	const uint32_t symbol = st->string_bytes;
+	const int symbol = st->string_bytes;
 	if (st->uses_16_bit_hash_slots) {
 		if (symbol > 64 * 1024)
 			return NFST_STRING_TABLE_FULL;
@@ -215,7 +215,7 @@ int32_t nfst_to_symbol(struct nfst_StringTable *st, const char *s)
 // Returns the string corresponding to the `symbol`. Calling this with a
 // value which is not a symbol returned by `nfst_to_symbol()` results in
 // undefined behavior.
-const char *nfst_to_string(struct nfst_StringTable *st, int32_t symbol)
+const char *nfst_to_string(struct nfst_StringTable *st, int symbol)
 {
 	return strings(st) + symbol;
 }
@@ -253,7 +253,7 @@ static inline char *strings(struct nfst_StringTable *st)
 		 (char *)(hashtable_32(st) + st->num_hash_slots);
 }
 
-static inline int32_t available_string_bytes(struct nfst_StringTable *st)
+static inline int available_string_bytes(struct nfst_StringTable *st)
 {
 	return st->uses_16_bit_hash_slots ?
 		st->allocated_bytes - sizeof(*st) - st->num_hash_slots * sizeof(uint16_t) :
@@ -270,7 +270,7 @@ static void rebuild_hash_table(struct nfst_StringTable *st)
 		uint16_t * const ht = hashtable_16(st);
 		while (s < strs + st->string_bytes) {
 			const struct HashAndLength hl = hash_and_length(s);
-			uint32_t i = hl.hash % st->num_hash_slots;
+			int i = hl.hash % st->num_hash_slots;
 			while (ht[i])
 				i = (i + 1) % st->num_hash_slots;
 			ht[i] = s - strs;
@@ -282,7 +282,7 @@ static void rebuild_hash_table(struct nfst_StringTable *st)
 		uint32_t * const ht = hashtable_32(st);
 		while (s < strs + st->string_bytes) {
 			const struct HashAndLength hl = hash_and_length(s);
-			uint32_t i = hl.hash % st->num_hash_slots;
+			int i = hl.hash % st->num_hash_slots;
 			while (ht[i])
 				i = (i + 1) % st->num_hash_slots;
 			ht[i] = s - strs;
@@ -322,8 +322,8 @@ static void rebuild_hash_table(struct nfst_StringTable *st)
 			assert(nfst_to_symbol(st, "") == 0);
 			assert_strequal("", nfst_to_string(st, 0));
 
-			int32_t sym_niklas = nfst_to_symbol(st, "niklas");
-			int32_t sym_frykholm = nfst_to_symbol(st, "frykholm");
+			int sym_niklas = nfst_to_symbol(st, "niklas");
+			int sym_frykholm = nfst_to_symbol(st, "frykholm");
 
 			assert(sym_niklas == nfst_to_symbol(st, "niklas"));
 			assert(sym_frykholm == nfst_to_symbol(st, "frykholm"));
@@ -340,10 +340,10 @@ static void rebuild_hash_table(struct nfst_StringTable *st)
 			
 			assert(nfst_to_symbol(st, "01234567890123456789") == NFST_STRING_TABLE_FULL);
 
-			for (int32_t i = 0; i<10000; ++i) {
+			for (int i = 0; i<10000; ++i) {
 				char s[10];
 				sprintf(s, "%i", i);
-				int32_t sym = nfst_to_symbol(st, s);
+				int sym = nfst_to_symbol(st, s);
 				while (sym == NFST_STRING_TABLE_FULL) {
 					st = grow(st);
 					sym = nfst_to_symbol(st, s);
@@ -354,10 +354,10 @@ static void rebuild_hash_table(struct nfst_StringTable *st)
 			nfst_pack(st);
 			st = realloc(st, st->allocated_bytes);
 			
-			for (int32_t i=0; i<10000; ++i) {
+			for (int i=0; i<10000; ++i) {
 				char s[10];
 				sprintf(s, "%i", i);
-				int32_t sym = nfst_to_symbol(st, s);
+				int sym = nfst_to_symbol(st, s);
 				assert(sym > 0);
 				assert_strequal(s, nfst_to_string(st, sym));
 			}
@@ -386,7 +386,7 @@ static void rebuild_hash_table(struct nfst_StringTable *st)
 		clock_t start = clock();
 		srand(0);
 		for (int i=0; i<10000000; ++i) {
-			int32_t sym = nfst_to_symbol(st, s[rand() % 10000]);
+			int sym = nfst_to_symbol(st, s[rand() % 10000]);
 			assert(sym >= 0);
 		}
 		clock_t stop = clock();
