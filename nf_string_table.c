@@ -31,6 +31,7 @@
 struct nfst_StringTable;
 
 void nfst_init(struct nfst_StringTable *st, int bytes, int average_string_size);
+int nfst_allocated_bytes(struct nfst_StringTable *st);
 void nfst_grow(struct nfst_StringTable *st, int bytes);
 int  nfst_pack(struct nfst_StringTable *st);
 int nfst_to_symbol(struct nfst_StringTable *st, const char *s);
@@ -107,6 +108,12 @@ void nfst_init(struct nfst_StringTable *st, int bytes, int average_strlen)
 	// empty hash slots.
 	strings(st)[0] = 0;
 	st->string_bytes = 1;
+}
+
+// Returns the number of bytes allocated by the string table.
+int nfst_allocated_bytes(struct nfst_StringTable *st)
+{
+	return st->allocated_bytes;
 }
 
 // Grows the string table to size `bytes`. You must make sure that this many
