@@ -35,6 +35,7 @@ int nfst_allocated_bytes(struct nfst_StringTable *st);
 void nfst_grow(struct nfst_StringTable *st, int bytes);
 int  nfst_pack(struct nfst_StringTable *st);
 int nfst_to_symbol(struct nfst_StringTable *st, const char *s);
+int nfst_to_symbol_const(const struct nfst_StringTable *st, const char *s);
 const char *nfst_to_string(struct nfst_StringTable *, int symbol);
 
 // ## Implementation
@@ -219,6 +220,41 @@ int nfst_to_symbol(struct nfst_StringTable *st, const char *s)
 	return symbol;
 }
 
+/// As nfst_to_symbol(), but never adds the string to the table.
+/// If the string doesn't exist in the table NFST_STRING_TABLE_FULL
+/// is returned.
+int nfst_to_symbol_const(const struct nfst_StringTable *const_st, const char *s)
+{
+	struct nfst_StringTable *st = (struct nfst_StringTable *)const_st;
+
+	// "" maps to 0
+	if (!*s) return 0;
+
+	const struct HashAndLength hl = hash_and_length(s);
+	const char * const strs = strings(st);
+		
+	int i = 0;
+	if (st->uses_16_bit_hash_slots) {
+		const uint16_t * const ht = hashtable_16(st);
+		i = hl.hash % st->num_hash_slots;
+		while (ht[i]) {
+			if (strcmp(s, strs + ht[i]) == 0)
+				return ht[i];
+			i = (i+1) % st->num_hash_slots;
+		}
+	} else {
+		const uint32_t * const ht = hashtable_32(st);
+		i = hl.hash % st->num_hash_slots;
+		while (ht[i]) {
+			if (strcmp(s, strs + ht[i]) == 0)
+				return ht[i];
+			i = (i+1) % st->num_hash_slots;
+		}
+	}
+
+	return NFST_STRING_TABLE_FULL;
+}
+
 // Returns the string corresponding to the `symbol`. Calling this with a
 // value which is not a symbol returned by `nfst_to_symbol()` results in
 // undefined behavior.
@@ -335,6 +371,9 @@ static void rebuild_hash_table(struct nfst_StringTable *st)
 			assert(sym_niklas == nfst_to_symbol(st, "niklas"));
 			assert(sym_frykholm == nfst_to_symbol(st, "frykholm"));
 			assert(sym_niklas != sym_frykholm);
+
+			assert(sym_niklas == nfst_to_symbol_const(st, "niklas"));
+			assert(NFST_STRING_TABLE_FULL == nfst_to_symbol_const(st, "lax"));
 
 			assert_strequal("niklas", nfst_to_string(st, sym_niklas));
 			assert_strequal("frykholm", nfst_to_string(st, sym_frykholm));
