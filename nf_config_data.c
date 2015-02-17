@@ -18,8 +18,8 @@ int nfcd_type(struct nfcd_ConfigData *cd, nfcd_loc loc);
 double nfcd_to_number(struct nfcd_ConfigData *cd, nfcd_loc loc);
 const char *nfcd_to_string(struct nfcd_ConfigData *cd, nfcd_loc loc);
 
-int nfcd_array_size(struct nfcd_ConfigData *cd, nfcd_loc loc);
-nfcd_loc nfcd_array_element(struct nfcd_ConfigData *cd, int i);
+int nfcd_array_size(struct nfcd_ConfigData *cd, nfcd_loc arr);
+nfcd_loc nfcd_array_item(struct nfcd_ConfigData *cd, nfcd_loc arr, int i);
 
 int nfcd_object_size(struct nfcd_ConfigData *cd, nfcd_loc loc);
 nfcd_loc nfcd_object_key(struct nfcd_ConfigData *cd, int i);
@@ -31,11 +31,11 @@ nfcd_loc nfcd_false();
 nfcd_loc nfcd_true();
 nfcd_loc nfcd_add_number(struct nfcd_ConfigData **cd, double n);
 nfcd_loc nfcd_add_string(struct nfcd_ConfigData **cd, const char *s);
-nfcd_loc nfcd_add_array(struct nfcd_ConfigData **cd, int size, nfcd_loc *data);
+nfcd_loc nfcd_add_array(struct nfcd_ConfigData **cd, int size);
 nfcd_loc nfcd_add_object(struct nfcd_ConfigData **cd, int size, nfcd_loc *keys, nfcd_loc *values);
 void nfcd_set_root(struct nfcd_ConfigData *cd, nfcd_loc root);
 
-void nfcd_set_array_item(struct nfcd_ConfigData **cd, nfcd_loc array, int index, nfcd_loc item);
+void nfcd_push(struct nfcd_ConfigData **cd, nfcd_loc array, nfcd_loc item);
 void nfcd_set_object_value(struct nfcd_ConfigData **cd, nfcd_loc object, const char *key, nfcd_loc value);
 
 // IMPLEMENTATION
@@ -66,25 +66,35 @@ struct nfcd_ConfigData
 	void *realloc_user_data;
 };
 
+struct nfcd_Array
+{
+	int allocated_size;
+	int size;
+	nfcd_loc next_block;
+};
+
 #define LOC_OFFSET(loc)			((loc) >> NFCD_TYPE_BITS)
 #define LOC_TYPE(loc)			((loc) & NFCD_TYPE_MASK)
 #define MAKE_LOC(type, offset)	((type) | (offset) << NFCD_TYPE_BITS)
 
-static nfcd_loc write(struct nfcd_ConfigData **cdp, int type, void *p, int count);
+static nfcd_loc write(struct nfcd_ConfigData **cdp, int type, void *p, int count, int zeroes);
 
-static nfcd_loc write(struct nfcd_ConfigData **cdp, int type, void *p, int count)
+static nfcd_loc write(struct nfcd_ConfigData **cdp, int type, void *p, int count, int zeroes)
 {
+	int total = count + zeroes;
 	struct nfcd_ConfigData *cd = *cdp;
-	if (cd->used_bytes + count > cd->allocated_bytes) {
+	while (cd->used_bytes + total > cd->allocated_bytes) {
 		int new_size = cd->allocated_bytes*2;
-		*cdp = cd->realloc(cd->realloc_user_data, cd, cd->allocated_bytes, new_size,
+		cd = cd->realloc(cd->realloc_user_data, cd, cd->allocated_bytes, new_size,
 			__FILE__, __LINE__);
 		cd->allocated_bytes = new_size;
-		cd = *cdp;
+		*cdp = cd;
 	}
 	nfcd_loc loc = MAKE_LOC(type, cd->used_bytes);
 	memcpy((char *)cd + cd->used_bytes, p, count);
 	cd->used_bytes += count;
+	memset((char *)cd + cd->used_bytes, 0, zeroes);
+	cd->used_bytes += zeroes;
 	return loc;
 }
 
@@ -130,6 +140,31 @@ const char *nfcd_to_string(struct nfcd_ConfigData *cd, nfcd_loc loc)
 	return nfst_to_string(cd->string_table, LOC_OFFSET(loc));
 }
 
+int nfcd_array_size(struct nfcd_ConfigData *cd, nfcd_loc array)
+{
+	struct nfcd_Array *arr = (struct nfcd_Array *)((char *)cd + LOC_OFFSET(array));
+	int sz = 0;
+	sz += arr->size;
+	while (arr->next_block) {
+		arr = (struct nfcd_Array *)((char *)cd + LOC_OFFSET(arr->next_block));
+		sz += arr->size;
+	}
+	return sz;
+}
+
+nfcd_loc nfcd_array_item(struct nfcd_ConfigData *cd, nfcd_loc array, int i)
+{
+	struct nfcd_Array *arr = (struct nfcd_Array *)((char *)cd + LOC_OFFSET(array));
+	while (arr->next_block && i >= arr->size) {
+		i -= arr->size;
+		arr = (struct nfcd_Array *)((char *)cd + LOC_OFFSET(arr->next_block));
+	}
+	if (i >= arr->size)
+		return nfcd_null();
+	nfcd_loc *items = (nfcd_loc *)(arr + 1);
+	return items[i];
+}
+
 nfcd_loc nfcd_null()
 {
 	return MAKE_LOC(NFCD_TYPE_NULL, 0);
@@ -147,7 +182,7 @@ nfcd_loc nfcd_true()
 
 nfcd_loc nfcd_add_number(struct nfcd_ConfigData **cd, double n)
 {
-	return write(cd, NFCD_TYPE_NUMBER, &n, sizeof(n));
+	return write(cd, NFCD_TYPE_NUMBER, &n, sizeof(n), 0);
 }
 
 nfcd_loc nfcd_add_string(struct nfcd_ConfigData **cdp, const char *s)
@@ -167,9 +202,29 @@ nfcd_loc nfcd_add_string(struct nfcd_ConfigData **cdp, const char *s)
 	return MAKE_LOC(NFCD_TYPE_STRING, sym);
 }
 
+nfcd_loc nfcd_add_array(struct nfcd_ConfigData **cdp, int allocated_size)
+{
+	struct nfcd_Array a = {0};
+	a.allocated_size = allocated_size;
+	return write(cdp, NFCD_TYPE_ARRAY, &a, sizeof(a), allocated_size);
+}
+
 void nfcd_set_root(struct nfcd_ConfigData *cd, nfcd_loc loc)
 {
 	cd->root = loc;
+}
+
+void nfcd_push(struct nfcd_ConfigData **cdp, nfcd_loc array, nfcd_loc item)
+{
+	struct nfcd_Array *arr = (struct nfcd_Array *)((char *)*cdp + LOC_OFFSET(array));
+	while (arr->size == arr->allocated_size) {
+		if (arr->next_block == 0)
+			arr->next_block = nfcd_add_array(cdp, arr->allocated_size*2);
+		arr = (struct nfcd_Array *)((char *)*cdp + LOC_OFFSET(arr->next_block));
+	}
+	nfcd_loc *items = (nfcd_loc *)(arr + 1);
+	items[arr->size] = item;
+	++arr->size;
 }
 
 #ifdef NFCD_UNIT_TEST
@@ -201,6 +256,14 @@ void nfcd_set_root(struct nfcd_ConfigData *cd, nfcd_loc loc)
 		nfcd_set_root(cd, nfcd_add_string(&cd, "str"));
 		assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_STRING);
 		assert(strcmp(nfcd_to_string(cd, nfcd_root(cd)), "str") == 0);
+
+		nfcd_loc arr = nfcd_add_array(&cd, 16);
+		nfcd_push(&cd, arr, nfcd_add_number(&cd, 1));
+		nfcd_push(&cd, arr, nfcd_add_number(&cd, 2));
+		nfcd_push(&cd, arr, nfcd_add_number(&cd, 3));
+		assert(nfcd_array_size(cd, arr) == 3);
+		assert(nfcd_type(cd, nfcd_array_item(cd, arr, 1)) == NFCD_TYPE_NUMBER);
+		assert(nfcd_to_number(cd, nfcd_array_item(cd, arr,1)) == 2);
 
 		
 		/*
