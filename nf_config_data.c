@@ -21,10 +21,10 @@ const char *nfcd_to_string(struct nfcd_ConfigData *cd, nfcd_loc loc);
 int nfcd_array_size(struct nfcd_ConfigData *cd, nfcd_loc arr);
 nfcd_loc nfcd_array_item(struct nfcd_ConfigData *cd, nfcd_loc arr, int i);
 
-int nfcd_object_size(struct nfcd_ConfigData *cd, nfcd_loc loc);
-nfcd_loc nfcd_object_key(struct nfcd_ConfigData *cd, int i);
-nfcd_loc nfcd_object_value(struct nfcd_ConfigData *cd, int i);
-nfcd_loc nfcd_object_lookup(struct nfcd_ConfigData *cd, const char *key);
+int nfcd_object_size(struct nfcd_ConfigData *cd, nfcd_loc object);
+const char *nfcd_object_key(struct nfcd_ConfigData *cd, nfcd_loc object, int i);
+nfcd_loc nfcd_object_value(struct nfcd_ConfigData *cd, nfcd_loc object, int i);
+nfcd_loc nfcd_object_lookup(struct nfcd_ConfigData *cd, nfcd_loc object, const char *key);
 
 nfcd_loc nfcd_null();
 nfcd_loc nfcd_false();
@@ -49,6 +49,7 @@ void nfst_init(struct nfst_StringTable *st, int bytes, int average_string_size);
 int nfst_allocated_bytes(struct nfst_StringTable *st);
 void nfst_grow(struct nfst_StringTable *st, int bytes);
 int nfst_to_symbol(struct nfst_StringTable *st, const char *s);
+int nfst_to_symbol_const(const struct nfst_StringTable *st, const char *s);
 const char *nfst_to_string(struct nfst_StringTable *, int symbol);
 
 // nfcd_loc encodes type and offset into data
@@ -85,6 +86,7 @@ struct nfcd_ObjectItem
 #define MAKE_LOC(type, offset)	((type) | (offset) << NFCD_TYPE_BITS)
 
 static nfcd_loc write(struct nfcd_ConfigData **cdp, int type, void *p, int count, int zeroes);
+static struct nfcd_ObjectItem *object_item(struct nfcd_ConfigData *cd, nfcd_loc object, int i);
 
 static nfcd_loc write(struct nfcd_ConfigData **cdp, int type, void *p, int count, int zeroes)
 {
@@ -171,6 +173,67 @@ nfcd_loc nfcd_array_item(struct nfcd_ConfigData *cd, nfcd_loc array, int i)
 		return nfcd_null();
 	nfcd_loc *items = (nfcd_loc *)(arr + 1);
 	return items[i];
+}
+
+int nfcd_object_size(struct nfcd_ConfigData *cd, nfcd_loc obj)
+{
+	struct nfcd_Block *block = (struct nfcd_Block *)((char *)cd + LOC_OFFSET(obj));
+	int sz = 0;
+	sz += block->size;
+	while (block->next_block) {
+		block = (struct nfcd_Block *)((char *)cd + LOC_OFFSET(block->next_block));
+		sz += block->size;
+	}
+	return sz;
+}
+
+static struct nfcd_ObjectItem *object_item(struct nfcd_ConfigData *cd, nfcd_loc object, int i)
+{
+	assert(i >= 0);
+	struct nfcd_Block *block = (struct nfcd_Block *)((char *)cd + LOC_OFFSET(object));
+	while (block->next_block && i >= block->size) {
+		i -= block->size;
+		block = (struct nfcd_Block *)((char *)cd + LOC_OFFSET(block->next_block));
+	}
+	if (i >= block->size)
+		return NULL;
+	struct nfcd_ObjectItem *items = (struct nfcd_ObjectItem *)(block + 1);
+	return items + i;
+}
+
+const char *nfcd_object_key(struct nfcd_ConfigData *cd, nfcd_loc object, int i)
+{
+	struct nfcd_ObjectItem *item = object_item(cd, object, i);
+	if (!item)
+		return NULL;
+	return nfcd_to_string(cd, item->key);
+}
+
+nfcd_loc nfcd_object_value(struct nfcd_ConfigData *cd, nfcd_loc object, int i)
+{
+	struct nfcd_ObjectItem *item = object_item(cd, object, i);
+	if (!item)
+		return nfcd_null();
+	return item->value;
+}
+
+nfcd_loc nfcd_object_lookup(struct nfcd_ConfigData *cd, nfcd_loc object, const char *key)
+{
+	nfcd_loc key_loc = MAKE_LOC(NFCD_TYPE_STRING, nfst_to_symbol_const(cd->string_table, key));
+	
+	struct nfcd_Block *block = (struct nfcd_Block *)((char *)cd + LOC_OFFSET(object));
+	while (1) {
+		struct nfcd_ObjectItem *items = (struct nfcd_ObjectItem *)(block + 1);
+		for (int i=0; i<block->size; ++i) {
+			if (key_loc == items[i].key)
+				return items[i].value;
+		}
+		if (block->next_block == 0)
+			break;
+		block = (struct nfcd_Block *)((char *)cd + LOC_OFFSET(block->next_block));		
+	}
+
+	return nfcd_null();
 }
 
 nfcd_loc nfcd_null()
@@ -311,7 +374,15 @@ void nfcd_set_object_value(struct nfcd_ConfigData **cdp, nfcd_loc object, const 
 		nfcd_loc obj = nfcd_add_object(&cd, 16);
 		nfcd_set_object_value(&cd, obj, "name", nfcd_add_string(&cd, "Niklas"));
 		nfcd_set_object_value(&cd, obj, "age", nfcd_add_number(&cd, 41));
-		
+		assert(nfcd_type(cd, obj) == NFCD_TYPE_OBJECT);
+		assert(nfcd_object_size(cd, obj) == 2);
+		assert(strcmp(nfcd_object_key(cd, obj, 1), "age") == 0);
+		assert(nfcd_type(cd, nfcd_object_value(cd, obj, 0)) == NFCD_TYPE_STRING);
+		assert(strcmp(nfcd_to_string(cd, nfcd_object_value(cd, obj, 0)), "Niklas") == 0);
+		assert(nfcd_type(cd, nfcd_object_lookup(cd, obj, "age")) == NFCD_TYPE_NUMBER);
+		assert(nfcd_to_number(cd, nfcd_object_lookup(cd, obj, "age")) == 41);
+		assert(nfcd_type(cd, nfcd_object_lookup(cd, obj, "title")) == NFCD_TYPE_NULL);
+
 		/*
 
 		nfcd_loc people = nfcd_make_array(cd, 10);
