@@ -36,7 +36,7 @@ nfcd_loc nfcd_add_object(struct nfcd_ConfigData **cd, int size);
 void nfcd_set_root(struct nfcd_ConfigData *cd, nfcd_loc root);
 
 void nfcd_push(struct nfcd_ConfigData **cd, nfcd_loc array, nfcd_loc item);
-void nfcd_set_object_value(struct nfcd_ConfigData **cd, nfcd_loc object, const char *key, nfcd_loc value);
+void nfcd_set(struct nfcd_ConfigData **cd, nfcd_loc object, const char *key, nfcd_loc value);
 
 // IMPLEMENTATION
 
@@ -305,7 +305,7 @@ void nfcd_push(struct nfcd_ConfigData **cdp, nfcd_loc array, nfcd_loc item)
 	++arr->size;
 }
 
-void nfcd_set_object_value(struct nfcd_ConfigData **cdp, nfcd_loc object, const char *key_str, nfcd_loc value)
+void nfcd_set(struct nfcd_ConfigData **cdp, nfcd_loc object, const char *key_str, nfcd_loc value)
 {
 	nfcd_loc key = nfcd_add_string(cdp, key_str);
 
@@ -372,8 +372,8 @@ void nfcd_set_object_value(struct nfcd_ConfigData **cdp, nfcd_loc object, const 
 		assert(nfcd_type(cd, nfcd_array_item(cd, arr, 10)) == NFCD_TYPE_NULL);
 		
 		nfcd_loc obj = nfcd_add_object(&cd, 16);
-		nfcd_set_object_value(&cd, obj, "name", nfcd_add_string(&cd, "Niklas"));
-		nfcd_set_object_value(&cd, obj, "age", nfcd_add_number(&cd, 41));
+		nfcd_set(&cd, obj, "name", nfcd_add_string(&cd, "Niklas"));
+		nfcd_set(&cd, obj, "age", nfcd_add_number(&cd, 41));
 		assert(nfcd_type(cd, obj) == NFCD_TYPE_OBJECT);
 		assert(nfcd_object_size(cd, obj) == 2);
 		assert(strcmp(nfcd_object_key(cd, obj, 1), "age") == 0);
