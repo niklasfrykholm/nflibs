@@ -20,6 +20,7 @@ const char *nfjp_parse(const char *s, int len, struct nfcd_ConfigData **cdp);
 #include <setjmp.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <math.h>
 
 typedef int nfcd_loc;
 nfcd_loc nfcd_null();
@@ -86,13 +87,13 @@ nfcd_loc parse_value(struct Parser *p)
 {
 	//if (*p->s == '"')
 	//	return parse_string(p);
-	//else if ((*p->s >= '0' && *p->s <= '9') || *p->s=='-')
-	//	return parse_number(p);
+	if ((*p->s >= '0' && *p->s <= '9') || *p->s=='-')
+		return parse_number(p);
 	//if (*p->s == '{')
 	//	return parse_object(p);
 	//lse if (*p->s == '[')
 	//	return parse_array(p);
-	if (*p->s == 't')
+	else if (*p->s == 't')
 		return parse_true(p);
 	else if (*p->s == 'f')
 		return parse_false(p);
@@ -135,8 +136,69 @@ nfcd_loc parse_string(struct Parser *p)
 		}
 	}
 }
+*/
 
+static nfcd_loc parse_number(struct Parser *p)
+{
+	int sign = 1;
+	if (*p->s == '-') {
+		sign = -1;
+		++p->s;
+	}
 
+	int intp = 0;
+	if (*p->s == '0') {
+		++p->s;
+	} else if (*p->s >= '1' && *p->s <= '9' ) {
+		intp = (*p->s - '0');
+		++p->s;
+		while (*p->s >= '0' && *p->s <= '9' ) {
+			intp = 10*intp + (*p->s - '0');
+			++p->s;
+		}
+	} else
+		error(p, "Unxpected character `%c`", *p->s);
+
+	int fracp = 0;
+	int fracdiv = 1;
+	if (*p->s == '.') {
+		++p->s;
+		while (*p->s >= '0' && *p->s <= '9') {
+			fracp = 10*fracp + (*p->s - '0');
+			fracdiv *= 10;
+			++p->s;
+		}
+	}
+
+	int esign = 1;
+	int ep = 0;
+	if (*p->s == 'e' || *p->s == 'E') {
+		if (*p->s == '+')
+			++p->s;
+		else if (*p->s == '-') {
+			ep = -1;
+			++p->s;
+		}
+
+		if (*p->s >= '0' && *p->s <= '9') {
+			ep = (*p->s - '0');
+			++p->s;
+		} else
+			error(p, "Unexpected character `%c`", *p->s);
+
+		while (*p->s >= '0' && *p->s <= '9') {
+			ep = ep*10 + (*p->s - '0');
+			++p->s;
+		}
+	}
+
+	double v = (double)sign * ((double)intp + (double)fracp/(double)fracdiv) 
+		* pow(10.0, (double)esign * (double)ep);
+
+	return nfcd_add_number(p->cdp, v);
+}
+
+/*
 nfcd_loc parse_object(struct Parser *p)
 {
 	skip_char('{');
@@ -377,6 +439,14 @@ static void push(NfcdLocVector *v, nfcd_loc value)
 			char *s = "\n\n    \tfalse   \n\nx";
 			const char *err = nfjp_parse(s, strlen(s), &cd);
 			assert_strequal(err, "5: Unexpected character `x`");
+		}
+
+		{
+			char *s = "3.14";
+			const char *err = nfjp_parse(s, strlen(s), &cd);
+			assert(err == 0);
+			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_NUMBER);
+			assert(nfcd_to_number(cd, nfcd_root(cd)) == 3.14);
 		}
 	}
 
