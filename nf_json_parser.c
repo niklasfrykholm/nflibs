@@ -16,6 +16,11 @@ const char *nfjp_parse(const char *s, int len, struct nfcd_ConfigData **cdp);
 
 // ## Implementation
 
+#include <stdarg.h>
+#include <setjmp.h>
+#include <stdio.h>
+#include <ctype.h>
+
 typedef int nfcd_loc;
 nfcd_loc nfcd_null();
 nfcd_loc nfcd_false();
@@ -34,6 +39,8 @@ struct Parser
 	const char * const end;
 	int line_number;
 	struct nfcd_ConfigData **cdp;
+	char *error;
+	jmp_buf env;
 };
 
 struct NfcdLocVector
@@ -56,14 +63,21 @@ static nfcd_loc parse_true(struct Parser *p);
 static nfcd_loc parse_false(struct Parser *p);
 static nfcd_loc parse_null(struct Parser *p);
 
+static void skip_whitespace(struct Parser *p);
 static void skip_char(struct Parser *p, char c);
-static void error(struct Parser *p, const char *s);
+static void error(struct Parser *p, const char *s, ...);
 static void push(struct NfcdLocVector *vec, nfcd_loc value);
 
 const char *nfjp_parse(const char *s, int len, struct nfcd_ConfigData **cdp)
 {
-	struct Parser p = {s, s+len, 1, cdp};
+	struct Parser p = {s, s+len, 1, cdp, 0};
+	if (setjmp(p.env))
+		return p.error;
+	skip_whitespace(&p);
 	nfcd_loc root = parse_value(&p);
+	skip_whitespace(&p);
+	if (p.s < p.end)
+		error(&p, "Unexpected character `%c`", *p.s);
 	nfcd_set_root(*cdp, root);
 	return 0;
 }
@@ -85,7 +99,7 @@ nfcd_loc parse_value(struct Parser *p)
 	else if (*p->s == 'n')
 		return parse_null(p);
 	else
-		error(p, "Unexpected character");
+		error(p, "Unexpected character `%c`", *p->s);
 
 	return nfcd_null();
 }
@@ -233,15 +247,37 @@ nfcd_loc parse_null(struct Parser *p)
 	return nfcd_null();
 }
 
+static void skip_whitespace(struct Parser *p)
+{
+	while (p->s < p->end && isspace(*p->s)) {
+		if (*p->s == '\n')
+			++p->line_number;
+		++p->s;
+	}
+}
+
 static void skip_char(struct Parser *p, char c)
 {
 	if (*p->s != c)
-		error(p, "unexpected character");
+		error(p, "Expected `%c`, saw `%c`", c, *p->s);
 	++p->s;
 }
 
-static void error(struct Parser *p, const char *s)
+static void error(struct Parser *p, const char *format, ...)
 {
+	const int ERROR_BUFFER_SIZE = 80;
+
+	// Not thread-safe. hmm...
+	static char error[ERROR_BUFFER_SIZE];
+
+	p->error = error;
+	int n = sprintf(p->error, "%i: ", p->line_number);
+	va_list ap;
+	va_start(ap, format);
+	vsnprintf(p->error + n, ERROR_BUFFER_SIZE-n, format, ap);
+	va_end(ap);
+
+	longjmp(p->env, -1);
 }
 
 /*
@@ -284,6 +320,14 @@ static void push(NfcdLocVector *v, nfcd_loc value)
 		return realloc(ptr, nsize);
 	}
 
+	void assert_strequal(const char *s, const char *expected)
+	{
+		if (strcmp(s, expected)) {
+			fprintf(stderr, "Expected `%s`, saw `%s`", expected, s);
+			assert(0);
+		}
+	}
+
 	int main(int argc, char **argv)
 	{
 		struct nfcd_ConfigData *cd = nfcd_make(realloc_f, 0, 0, 0);
@@ -291,20 +335,48 @@ static void push(NfcdLocVector *v, nfcd_loc value)
 
 		{
 			char *s = "null";
-			nfjp_parse(s, strlen(s), &cd);
+			const char *err = nfjp_parse(s, strlen(s), &cd);
+			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_NULL);
 		}
 
 		{
 			char *s = "true";
-			nfjp_parse(s, strlen(s), &cd);
+			const char *err = nfjp_parse(s, strlen(s), &cd);
+			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_TRUE);
 		}
 
 		{
 			char *s = "false";
-			nfjp_parse(s, strlen(s), &cd);
+			const char *err = nfjp_parse(s, strlen(s), &cd);
+			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_FALSE);
+		}
+
+		{
+			char *s = "fulse";
+			const char *err = nfjp_parse(s, strlen(s), &cd);
+			assert_strequal(err, "1: Expected `a`, saw `u`");
+		}
+
+		{
+			char *s = "\n\n    \tfalse   \n\n";
+			const char *err = nfjp_parse(s, strlen(s), &cd);
+			assert(err == 0);
+			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_FALSE);
+		}
+
+		{
+			char *s = "\n\nfulse";
+			const char *err = nfjp_parse(s, strlen(s), &cd);
+			assert_strequal(err, "3: Expected `a`, saw `u`");
+		}
+
+		{
+			char *s = "\n\n    \tfalse   \n\nx";
+			const char *err = nfjp_parse(s, strlen(s), &cd);
+			assert_strequal(err, "5: Unexpected character `x`");
 		}
 	}
 
