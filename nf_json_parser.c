@@ -173,10 +173,12 @@ static nfcd_loc parse_number(struct Parser *p)
 	int esign = 1;
 	int ep = 0;
 	if (*p->s == 'e' || *p->s == 'E') {
+		++p->s;
+
 		if (*p->s == '+')
 			++p->s;
 		else if (*p->s == '-') {
-			ep = -1;
+			esign = -1;
 			++p->s;
 		}
 
@@ -390,6 +392,8 @@ static void push(NfcdLocVector *v, nfcd_loc value)
 		}
 	}
 
+	#define assert_numequal(v, e) assert(fabsf((v)-(e)) < 1e-7);
+
 	int main(int argc, char **argv)
 	{
 		struct nfcd_ConfigData *cd = nfcd_make(realloc_f, 0, 0, 0);
@@ -401,14 +405,12 @@ static void push(NfcdLocVector *v, nfcd_loc value)
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_NULL);
 		}
-
 		{
 			char *s = "true";
 			const char *err = nfjp_parse(s, strlen(s), &cd);
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_TRUE);
 		}
-
 		{
 			char *s = "false";
 			const char *err = nfjp_parse(s, strlen(s), &cd);
@@ -428,13 +430,11 @@ static void push(NfcdLocVector *v, nfcd_loc value)
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_FALSE);
 		}
-
 		{
 			char *s = "\n\nfulse";
 			const char *err = nfjp_parse(s, strlen(s), &cd);
 			assert_strequal(err, "3: Expected `a`, saw `u`");
 		}
-
 		{
 			char *s = "\n\n    \tfalse   \n\nx";
 			const char *err = nfjp_parse(s, strlen(s), &cd);
@@ -446,7 +446,15 @@ static void push(NfcdLocVector *v, nfcd_loc value)
 			const char *err = nfjp_parse(s, strlen(s), &cd);
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_NUMBER);
-			assert(nfcd_to_number(cd, nfcd_root(cd)) == 3.14);
+			assert_numequal(nfcd_to_number(cd, nfcd_root(cd)), 3.14);
+		}
+
+		{
+			char *s = "-3.14e-1";
+			const char *err = nfjp_parse(s, strlen(s), &cd);
+			assert(err == 0);
+			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_NUMBER);
+			assert_numequal(nfcd_to_number(cd, nfcd_root(cd)), -0.314);
 		}
 	}
 
