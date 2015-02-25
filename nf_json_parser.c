@@ -156,12 +156,14 @@ static nfcd_loc parse_number(struct Parser *p)
 			++p->s;
 		}
 	} else
-		error(p, "Unxpected character `%c`", *p->s);
+		error(p, "Bad number format");
 
 	int fracp = 0;
 	int fracdiv = 1;
 	if (*p->s == '.') {
 		++p->s;
+		if (*p->s < '0' || *p->s > '9')
+			error(p, "Bad number format");
 		while (*p->s >= '0' && *p->s <= '9') {
 			fracp = 10*fracp + (*p->s - '0');
 			fracdiv *= 10;
@@ -185,7 +187,7 @@ static nfcd_loc parse_number(struct Parser *p)
 			ep = (*p->s - '0');
 			++p->s;
 		} else
-			error(p, "Unexpected character `%c`", *p->s);
+			error(p, "Bad number format");
 
 		while (*p->s >= '0' && *p->s <= '9') {
 			ep = ep*10 + (*p->s - '0');
@@ -454,6 +456,16 @@ static void push(NfcdLocVector *v, nfcd_loc value)
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_NUMBER);
 			assert_numequal(nfcd_to_number(cd, nfcd_root(cd)), -0.314);
+		}
+
+		{
+			char *s[] = {"--3.14", ".1", "-.1", "00", "00.0", "0e",
+				"0.", "0.e1", "0.0ee", "0.0++e"};
+			int n = sizeof(s) / sizeof(s[0]);
+			for (int i=0; i<n; ++i) {
+				const char *err = nfjp_parse(s[i], &cd);
+				assert(err != 0);
+			}
 		}
 	}
 
