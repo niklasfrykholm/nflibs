@@ -12,7 +12,7 @@ struct nfjp_Settings
 	int python_multiline_strings;	
 };
 
-const char *nfjp_parse(const char *s, int len, struct nfcd_ConfigData **cdp);
+const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp);
 
 // ## Implementation
 
@@ -37,7 +37,6 @@ void nfcd_set(struct nfcd_ConfigData **cd, nfcd_loc object, const char *key, nfc
 struct Parser
 {
 	const char *s;
-	const char * const end;
 	int line_number;
 	struct nfcd_ConfigData **cdp;
 	char *error;
@@ -69,15 +68,15 @@ static void skip_char(struct Parser *p, char c);
 static void error(struct Parser *p, const char *s, ...);
 static void push(struct NfcdLocVector *vec, nfcd_loc value);
 
-const char *nfjp_parse(const char *s, int len, struct nfcd_ConfigData **cdp)
+const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp)
 {
-	struct Parser p = {s, s+len, 1, cdp, 0};
+	struct Parser p = {s, 1, cdp, 0};
 	if (setjmp(p.env))
 		return p.error;
 	skip_whitespace(&p);
 	nfcd_loc root = parse_value(&p);
 	skip_whitespace(&p);
-	if (p.s < p.end)
+	if (*p.s)
 		error(&p, "Unexpected character `%c`", *p.s);
 	nfcd_set_root(*cdp, root);
 	return 0;
@@ -313,7 +312,7 @@ nfcd_loc parse_null(struct Parser *p)
 
 static void skip_whitespace(struct Parser *p)
 {
-	while (p->s < p->end && isspace(*p->s)) {
+	while (isspace(*p->s)) {
 		if (*p->s == '\n')
 			++p->line_number;
 		++p->s;
@@ -401,49 +400,49 @@ static void push(NfcdLocVector *v, nfcd_loc value)
 
 		{
 			char *s = "null";
-			const char *err = nfjp_parse(s, strlen(s), &cd);
+			const char *err = nfjp_parse(s, &cd);
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_NULL);
 		}
 		{
 			char *s = "true";
-			const char *err = nfjp_parse(s, strlen(s), &cd);
+			const char *err = nfjp_parse(s, &cd);
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_TRUE);
 		}
 		{
 			char *s = "false";
-			const char *err = nfjp_parse(s, strlen(s), &cd);
+			const char *err = nfjp_parse(s, &cd);
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_FALSE);
 		}
 
 		{
 			char *s = "fulse";
-			const char *err = nfjp_parse(s, strlen(s), &cd);
+			const char *err = nfjp_parse(s, &cd);
 			assert_strequal(err, "1: Expected `a`, saw `u`");
 		}
 
 		{
 			char *s = "\n\n    \tfalse   \n\n";
-			const char *err = nfjp_parse(s, strlen(s), &cd);
+			const char *err = nfjp_parse(s, &cd);
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_FALSE);
 		}
 		{
 			char *s = "\n\nfulse";
-			const char *err = nfjp_parse(s, strlen(s), &cd);
+			const char *err = nfjp_parse(s, &cd);
 			assert_strequal(err, "3: Expected `a`, saw `u`");
 		}
 		{
 			char *s = "\n\n    \tfalse   \n\nx";
-			const char *err = nfjp_parse(s, strlen(s), &cd);
+			const char *err = nfjp_parse(s, &cd);
 			assert_strequal(err, "5: Unexpected character `x`");
 		}
 
 		{
 			char *s = "3.14";
-			const char *err = nfjp_parse(s, strlen(s), &cd);
+			const char *err = nfjp_parse(s, &cd);
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_NUMBER);
 			assert_numequal(nfcd_to_number(cd, nfcd_root(cd)), 3.14);
@@ -451,7 +450,7 @@ static void push(NfcdLocVector *v, nfcd_loc value)
 
 		{
 			char *s = "-3.14e-1";
-			const char *err = nfjp_parse(s, strlen(s), &cd);
+			const char *err = nfjp_parse(s, &cd);
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_NUMBER);
 			assert_numequal(nfcd_to_number(cd, nfcd_root(cd)), -0.314);
