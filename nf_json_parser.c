@@ -21,8 +21,10 @@ const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp);
 #include <stdio.h>
 #include <ctype.h>
 #include <math.h>
+#include <memory.h>
 
 typedef int nfcd_loc;
+typedef void * (*nfcd_realloc) (void *ud, void *ptr, int osize, int nsize, const char *file, int line);
 nfcd_loc nfcd_null();
 nfcd_loc nfcd_false();
 nfcd_loc nfcd_true();
@@ -33,6 +35,7 @@ nfcd_loc nfcd_add_object(struct nfcd_ConfigData **cd, int size);
 void nfcd_set_root(struct nfcd_ConfigData *cd, nfcd_loc root);
 void nfcd_push(struct nfcd_ConfigData **cd, nfcd_loc array, nfcd_loc item);
 void nfcd_set(struct nfcd_ConfigData **cd, nfcd_loc object, const char *key, nfcd_loc value);
+nfcd_realloc nfcd_allocator(struct nfcd_ConfigData *cd, void **user_data);
 
 struct Parser
 {
@@ -52,16 +55,6 @@ struct NfcdLocVector
 };
 */
 
-#define CHAR_BUFFER_STATIC_SIZE 128
-
-struct CharBuffer
-{
-	int allocated;
-	int n;
-	char *s;
-	char buffer[CHAR_BUFFER_STATIC_SIZE];
-};
-
 static nfcd_loc parse_value(struct Parser *p);
 static nfcd_loc parse_object(struct Parser *p);
 static nfcd_loc parse_members(struct Parser *p);
@@ -80,7 +73,18 @@ static void skip_char(struct Parser *p, char c);
 
 static void error(struct Parser *p, const char *s, ...);
 
-static void push_char(struct Parser *p, struct CharBuffer *cb, char c);
+#define CHAR_BUFFER_STATIC_SIZE 128
+struct CharBuffer
+{
+	int allocated;
+	int n;
+	char *s;
+	char buffer[CHAR_BUFFER_STATIC_SIZE];
+};
+static void cb_grow(struct Parser *p, struct CharBuffer *cb);
+static inline void cb_push(struct Parser *p, struct CharBuffer *cb, char c);
+
+static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize);
 
 const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp)
 {
@@ -126,12 +130,12 @@ nfcd_loc parse_string(struct Parser *p)
 	while (1) {
 		if (*p->s == 0 || *p->s == '"')
 			break;
-		push_char(p, &cb, *p->s);
+		cb_push(p, &cb, *p->s);
 		++p->s;
 	}
 
 	skip_char(p, '"');
-	push_char(p, &cb, 0);
+	cb_push(p, &cb, 0);
 	return nfcd_add_string(p->cdp, cb.s);
 }
 
@@ -343,16 +347,31 @@ static void error(struct Parser *p, const char *format, ...)
 	longjmp(p->env, -1);
 }
 
-static void push_char(struct Parser *p, struct CharBuffer *cb, char c)
+static void cb_grow(struct Parser *p, struct CharBuffer *cb)
 {
 	if (cb->allocated == 0) {
 		cb->allocated = CHAR_BUFFER_STATIC_SIZE;
 		cb->s = cb->buffer;
+		return;
 	}
 
-	if (cb->n >= cb->allocated)
-		error(p, "CharBuffer full");
+	int manual_copy = 0;
+	if (cb->s == cb->buffer) {
+		cb->s = 0;
+		manual_copy = 1;
+	}
 
+	cb->s = temp_realloc(p, cb->s, cb->allocated, cb->allocated*2);
+	cb->allocated *= 2;
+
+	if (manual_copy)
+		memcpy(cb->s, cb->buffer, cb->n);
+}
+
+static inline void cb_push(struct Parser *p, struct CharBuffer *cb, char c)
+{
+	if (cb->n >= cb->allocated)
+		cb_grow(p, cb);
 	cb->s[cb->n++] = c;
 }
 
@@ -366,6 +385,13 @@ static void push(NfcdLocVector *v, nfcd_loc value)
 	v->data[v->n++] = value;
 }
 */
+
+static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
+{
+	void *realloc_ud;
+	nfcd_realloc realloc_f = nfcd_allocator(*p->cdp, &realloc_ud);
+	return realloc_f(realloc_ud, optr, osize, nsize, __FILE__, __LINE__);
+}
 
 #ifdef NFJP_UNIT_TEST
 
@@ -485,6 +511,17 @@ static void push(NfcdLocVector *v, nfcd_loc value)
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_STRING);
 			assert_strequal(nfcd_to_string(cd, nfcd_root(cd)), "niklas");
+		}
+
+		{
+			char *s = "\"01234567890123456789012345678901234567890123456789"
+				        "01234567890123456789012345678901234567890123456789"
+				        "01234567890123456789012345678901234567890123456789"
+				        "01234567890123456789012345678901234567890123456789\"";
+			const char *err = nfjp_parse(s, &cd);
+			assert(err == 0);
+			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_STRING);
+			assert(strlen(nfcd_to_string(cd, nfcd_root(cd))) == 200);
 		}
 	}
 

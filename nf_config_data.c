@@ -38,6 +38,8 @@ void nfcd_set_root(struct nfcd_ConfigData *cd, nfcd_loc root);
 void nfcd_push(struct nfcd_ConfigData **cd, nfcd_loc array, nfcd_loc item);
 void nfcd_set(struct nfcd_ConfigData **cd, nfcd_loc object, const char *key, nfcd_loc value);
 
+nfcd_realloc nfcd_allocator(struct nfcd_ConfigData *cd, void **user_data);
+
 // IMPLEMENTATION
 
 #include <memory.h>
@@ -329,6 +331,12 @@ void nfcd_set(struct nfcd_ConfigData **cdp, nfcd_loc object, const char *key_str
 	items[block->size].key = key;
 	items[block->size].value = value;
 	++block->size;
+}
+
+nfcd_realloc nfcd_allocator(struct nfcd_ConfigData *cd, void **user_data)
+{
+	*user_data = cd->realloc_user_data;
+	return cd->realloc;
 }
 
 #ifdef NFCD_UNIT_TEST
