@@ -130,10 +130,24 @@ nfcd_loc parse_string(struct Parser *p)
 	while (1) {
 		if (*p->s == 0 || *p->s == '"')
 			break;
-		if (*p->s < 32)
+		else if (*p->s < 32)
 			error(p, "Literal control character in string");
-		cb_push(p, &cb, *p->s);
-		++p->s;
+		else if (*p->s == '\\') {
+			++p->s;
+			switch (*p->s) {
+				case '"': case '\\': case '/': cb_push(p, &cb, *p->s); break;
+				case 'b': cb_push(p, &cb, '\b'); break;
+				case 'f': cb_push(p, &cb, '\f'); break;
+				case 'n': cb_push(p, &cb, '\n'); break;
+				case 'r': cb_push(p, &cb, '\r'); break;
+				case 't': cb_push(p, &cb, '\t'); break;
+				default: error(p, "Unexpected character `%c`", *p->s);
+			}
+			++p->s;
+		} else {
+			cb_push(p, &cb, *p->s);
+			++p->s;
+		}
 	}
 
 	skip_char(p, '"');
@@ -530,6 +544,14 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 			char *s = "\"\n\"";
 			const char *err = nfjp_parse(s, &cd);
 			assert_strequal(err, "1: Literal control character in string");
+		}
+
+		{
+			char *s = "\"\\\"\\\\\\/\\b\\f\\n\\r\\t\"";
+			const char *err = nfjp_parse(s, &cd);
+			assert(err == 0);
+			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_STRING);
+			assert_strequal(nfcd_to_string(cd, nfcd_root(cd)), "\"\\/\b\f\n\r\t");
 		}
 	}
 
