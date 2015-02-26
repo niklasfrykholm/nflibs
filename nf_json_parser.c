@@ -43,11 +43,23 @@ struct Parser
 	jmp_buf env;
 };
 
+/*
 struct NfcdLocVector
 {
 	int allocated;
 	int n;
 	nfcd_loc *data;
+};
+*/
+
+#define CHAR_BUFFER_STATIC_SIZE 128
+
+struct CharBuffer
+{
+	int allocated;
+	int n;
+	char *s;
+	char buffer[CHAR_BUFFER_STATIC_SIZE];
 };
 
 static nfcd_loc parse_value(struct Parser *p);
@@ -65,8 +77,10 @@ static nfcd_loc parse_null(struct Parser *p);
 
 static void skip_whitespace(struct Parser *p);
 static void skip_char(struct Parser *p, char c);
+
 static void error(struct Parser *p, const char *s, ...);
-static void push(struct NfcdLocVector *vec, nfcd_loc value);
+
+static void push_char(struct Parser *p, struct CharBuffer *cb, char c);
 
 const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp)
 {
@@ -84,8 +98,8 @@ const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp)
 
 nfcd_loc parse_value(struct Parser *p)
 {
-	//if (*p->s == '"')
-	//	return parse_string(p);
+	if (*p->s == '"')
+		return parse_string(p);
 	if ((*p->s >= '0' && *p->s <= '9') || *p->s=='-')
 		return parse_number(p);
 	//if (*p->s == '{')
@@ -104,38 +118,22 @@ nfcd_loc parse_value(struct Parser *p)
 	return nfcd_null();
 }
 
-/*
 nfcd_loc parse_string(struct Parser *p)
 {
+	struct CharBuffer cb = {0};
 	skip_char(p, '"');
 
-	// The most common case is a string with no quoted characters.
-	// Detect this case and parse the string without any memory allocation.
-	{
-		char *start = p->s;
-		char *s = p->s;
-		while (s < end && s != '"' && s != '\\')
-			++s;
-		if (*s == '"') {
-			++s;
-			p->s = s;
-			return nfcd_add_string(cdp, start, s-start);
-		}
+	while (1) {
+		if (*p->s == 0 || *p->s == '"')
+			break;
+		push_char(p, &cb, *p->s);
+		++p->s;
 	}
 
-	// Quoted string,
-	{
-		CharVector cv = {0};
-
-		char *s = p->s;
-		while (s < p->end) {
-			if (*s == '"')
-				break;
-
-		}
-	}
+	skip_char(p, '"');
+	push_char(p, &cb, 0);
+	return nfcd_add_string(p->cdp, cb.s);
 }
-*/
 
 static nfcd_loc parse_number(struct Parser *p)
 {
@@ -345,6 +343,19 @@ static void error(struct Parser *p, const char *format, ...)
 	longjmp(p->env, -1);
 }
 
+static void push_char(struct Parser *p, struct CharBuffer *cb, char c)
+{
+	if (cb->allocated == 0) {
+		cb->allocated = CHAR_BUFFER_STATIC_SIZE;
+		cb->s = cb->buffer;
+	}
+
+	if (cb->n >= cb->allocated)
+		error(p, "CharBuffer full");
+
+	cb->s[cb->n++] = c;
+}
+
 /*
 static void push(NfcdLocVector *v, nfcd_loc value)
 {
@@ -388,7 +399,7 @@ static void push(NfcdLocVector *v, nfcd_loc value)
 	void assert_strequal(const char *s, const char *expected)
 	{
 		if (strcmp(s, expected)) {
-			fprintf(stderr, "Expected `%s`, saw `%s`", expected, s);
+			fprintf(stderr, "Expected `%s`, saw `%s`\n", expected, s);
 			assert(0);
 		}
 	}
@@ -466,6 +477,14 @@ static void push(NfcdLocVector *v, nfcd_loc value)
 				const char *err = nfjp_parse(s[i], &cd);
 				assert(err != 0);
 			}
+		}
+
+		{
+			char *s = "\"niklas\"";
+			const char *err = nfjp_parse(s, &cd);
+			assert(err == 0);
+			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_STRING);
+			assert_strequal(nfcd_to_string(cd, nfcd_root(cd)), "niklas");
 		}
 	}
 
