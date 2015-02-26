@@ -130,6 +130,8 @@ nfcd_loc parse_string(struct Parser *p)
 	while (1) {
 		if (*p->s == 0 || *p->s == '"')
 			break;
+		if (*p->s < 32)
+			error(p, "Literal control character in string");
 		cb_push(p, &cb, *p->s);
 		++p->s;
 	}
@@ -522,6 +524,12 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_STRING);
 			assert(strlen(nfcd_to_string(cd, nfcd_root(cd))) == 200);
+		}
+
+		{
+			char *s = "\"\n\"";
+			const char *err = nfjp_parse(s, &cd);
+			assert_strequal(err, "1: Literal control character in string");
 		}
 	}
 
