@@ -46,15 +46,6 @@ struct Parser
 	jmp_buf env;
 };
 
-/*
-struct NfcdLocVector
-{
-	int allocated;
-	int n;
-	nfcd_loc *data;
-};
-*/
-
 static nfcd_loc parse_value(struct Parser *p);
 static nfcd_loc parse_object(struct Parser *p);
 static nfcd_loc parse_members(struct Parser *p);
@@ -84,6 +75,17 @@ struct CharBuffer
 static void cb_grow(struct Parser *p, struct CharBuffer *cb);
 static inline void cb_push(struct Parser *p, struct CharBuffer *cb, char c);
 
+#define LOC_BUFFER_STATIC_SIZE 128
+struct LocBuffer
+{
+	int allocated;
+	int n;
+	nfcd_loc *data;
+	nfcd_loc buffer[LOC_BUFFER_STATIC_SIZE];
+};
+static void lb_grow(struct Parser *p, struct LocBuffer *lb);
+static inline void lb_push(struct Parser *p, struct LocBuffer *lb, nfcd_loc loc);
+
 static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize);
 
 const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp)
@@ -104,12 +106,12 @@ nfcd_loc parse_value(struct Parser *p)
 {
 	if (*p->s == '"')
 		return parse_string(p);
-	if ((*p->s >= '0' && *p->s <= '9') || *p->s=='-')
+	else if ((*p->s >= '0' && *p->s <= '9') || *p->s=='-')
 		return parse_number(p);
 	//if (*p->s == '{')
 	//	return parse_object(p);
-	//lse if (*p->s == '[')
-	//	return parse_array(p);
+	else if (*p->s == '[')
+		return parse_array(p);
 	else if (*p->s == 't')
 		return parse_true(p);
 	else if (*p->s == 'f')
@@ -152,7 +154,10 @@ nfcd_loc parse_string(struct Parser *p)
 
 	skip_char(p, '"');
 	cb_push(p, &cb, 0);
-	return nfcd_add_string(p->cdp, cb.s);
+	nfcd_loc loc = nfcd_add_string(p->cdp, cb.s);
+	if (cb.s != cb.buffer)
+		temp_realloc(p, cb.s, cb.allocated, 0);
+	return loc;
 }
 
 static nfcd_loc parse_number(struct Parser *p)
@@ -265,42 +270,44 @@ nfcd_loc parse_members(struct Parser *p)
 
 	return obj;
 }
+*/
 
 nfcd_loc parse_array(struct Parser *p)
 {
-	skip_char('[');
-	skip_whitespace();
+	skip_char(p, '[');
+	skip_whitespace(p);
 	nfcd_loc arr;
-	if (*p == ']')
+	if (*p->s == ']') {
+		skip_char(p, ']');
 		arr = nfcd_add_array(p->cdp, 0);
-	else
+	} else {
 		arr = parse_elements(p);
+	}
 	return arr;
 }
 
 nfcd_loc parse_elements(struct Parser *p)
 {
-	struct NfcdLocVector elements = {0};
+	struct LocBuffer elements = {0};
 
 	while (1) {
-		skip_whitespace();
-		nfcd_loc element = parse_value();
-		push(elements, element);
-		skip_whitespace();
+		skip_whitespace(p);
 		if (*p->s == ']')
 			break;
+		nfcd_loc element = parse_value(p);
+		lb_push(p, &elements, element);
 	}
+	skip_char(p, ']');
 
 	nfcd_loc arr = nfcd_add_array(p->cdp, elements.n);
 	for (int i=0; i<elements.n; ++i)
 		nfcd_push(p->cdp, arr, elements.data[i]);
 
-	temp_free(elements.data);
-
+	if (elements.data != elements.buffer)
+		temp_realloc(p, elements.data, sizeof(nfcd_loc)*elements.allocated, 0);
+	
 	return arr;
 }
-
-*/
 
 nfcd_loc parse_true(struct Parser *p)
 {
@@ -389,6 +396,34 @@ static inline void cb_push(struct Parser *p, struct CharBuffer *cb, char c)
 	if (cb->n >= cb->allocated)
 		cb_grow(p, cb);
 	cb->s[cb->n++] = c;
+}
+
+static void lb_grow(struct Parser *p, struct LocBuffer *lb)
+{
+	if (lb->allocated == 0) {
+		lb->allocated = LOC_BUFFER_STATIC_SIZE;
+		lb->data = lb->buffer;
+		return;
+	}
+
+	int manual_copy = 0;
+	if (lb->data == lb->buffer) {
+		lb->data = 0;
+		manual_copy = 1;
+	}
+
+	lb->data = temp_realloc(p, lb->data, sizeof(nfcd_loc)*lb->allocated, sizeof(nfcd_loc)*lb->allocated*2);
+	lb->allocated *= 2;
+
+	if (manual_copy)
+		memcpy(lb->data, lb->buffer, lb->n);
+}
+
+static inline void lb_push(struct Parser *p, struct LocBuffer *lb, nfcd_loc loc)
+{
+	if (lb->n >= lb->allocated)
+		lb_grow(p, lb);
+	lb->data[lb->n++] = loc;
 }
 
 /*
@@ -552,6 +587,14 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_STRING);
 			assert_strequal(nfcd_to_string(cd, nfcd_root(cd)), "\"\\/\b\f\n\r\t");
+		}
+
+		{
+			char *s = "[]";
+			const char *err = nfjp_parse(s, &cd);
+			assert(err == 0);
+			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_ARRAY);
+			assert(nfcd_array_size(cd, nfcd_root(cd)) == 0);
 		}
 	}
 
