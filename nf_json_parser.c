@@ -292,10 +292,12 @@ nfcd_loc parse_elements(struct Parser *p)
 
 	while (1) {
 		skip_whitespace(p);
-		if (*p->s == ']')
-			break;
 		nfcd_loc element = parse_value(p);
 		lb_push(p, &elements, element);
+		skip_whitespace(p);
+		if (*p->s == ']')
+			break;
+		skip_char(p, ',');
 	}
 	skip_char(p, ']');
 
@@ -595,6 +597,24 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_ARRAY);
 			assert(nfcd_array_size(cd, nfcd_root(cd)) == 0);
+		}
+
+		{
+			char *s = "[1, 2, 3]";
+			const char *err = nfjp_parse(s, &cd);
+			assert(err == 0);
+			nfcd_loc arr = nfcd_root(cd);
+			assert(nfcd_type(cd, arr) == NFCD_TYPE_ARRAY);
+			assert(nfcd_array_size(cd, arr) == 3);
+			nfcd_loc arr_1 = nfcd_array_item(cd, arr, 1);
+			assert(nfcd_type(cd, arr_1) == NFCD_TYPE_NUMBER);
+			assert(nfcd_to_number(cd, arr_1) == 2);
+		}
+
+		{
+			char *s = "[1 2 3]";
+			const char *err = nfjp_parse(s, &cd);
+			assert_strequal(err, "1: Expected `,`, saw `2`");
 		}
 	}
 
