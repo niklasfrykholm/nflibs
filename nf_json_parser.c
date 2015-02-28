@@ -1,7 +1,6 @@
 struct nfcd_ConfigData;
 
-//
-
+/*
 struct nfjp_Settings
 {
 	int comments;
@@ -11,6 +10,7 @@ struct nfjp_Settings
 	int equal_sign;
 	int python_multiline_strings;	
 };
+*/
 
 const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp);
 
@@ -35,6 +35,7 @@ nfcd_loc nfcd_add_object(struct nfcd_ConfigData **cd, int size);
 void nfcd_set_root(struct nfcd_ConfigData *cd, nfcd_loc root);
 void nfcd_push(struct nfcd_ConfigData **cd, nfcd_loc array, nfcd_loc item);
 void nfcd_set(struct nfcd_ConfigData **cd, nfcd_loc object, const char *key, nfcd_loc value);
+void nfcd_set_loc(struct nfcd_ConfigData **cdp, nfcd_loc object, nfcd_loc key, nfcd_loc value);
 nfcd_realloc nfcd_allocator(struct nfcd_ConfigData *cd, void **user_data);
 
 struct Parser
@@ -73,6 +74,7 @@ struct CharBuffer
 	char buffer[CHAR_BUFFER_STATIC_SIZE];
 };
 static void cb_grow(struct Parser *p, struct CharBuffer *cb);
+static void cb_free(struct Parser *p, struct CharBuffer *cb);
 static inline void cb_push(struct Parser *p, struct CharBuffer *cb, char c);
 
 #define LOC_BUFFER_STATIC_SIZE 128
@@ -84,6 +86,7 @@ struct LocBuffer
 	nfcd_loc buffer[LOC_BUFFER_STATIC_SIZE];
 };
 static void lb_grow(struct Parser *p, struct LocBuffer *lb);
+static void lb_free(struct Parser *p, struct LocBuffer *lb);
 static inline void lb_push(struct Parser *p, struct LocBuffer *lb, nfcd_loc loc);
 
 static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize);
@@ -108,8 +111,8 @@ nfcd_loc parse_value(struct Parser *p)
 		return parse_string(p);
 	else if ((*p->s >= '0' && *p->s <= '9') || *p->s=='-')
 		return parse_number(p);
-	//if (*p->s == '{')
-	//	return parse_object(p);
+	else if (*p->s == '{')
+		return parse_object(p);
 	else if (*p->s == '[')
 		return parse_array(p);
 	else if (*p->s == 't')
@@ -155,8 +158,7 @@ nfcd_loc parse_string(struct Parser *p)
 	skip_char(p, '"');
 	cb_push(p, &cb, 0);
 	nfcd_loc loc = nfcd_add_string(p->cdp, cb.s);
-	if (cb.s != cb.buffer)
-		temp_realloc(p, cb.s, cb.allocated, 0);
+	cb_free(p, &cb);
 	return loc;
 }
 
@@ -224,17 +226,16 @@ static nfcd_loc parse_number(struct Parser *p)
 	return nfcd_add_number(p->cdp, v);
 }
 
-/*
 nfcd_loc parse_object(struct Parser *p)
 {
-	skip_char('{');
-	skip_whitespace();
+	skip_char(p, '{');
+	skip_whitespace(p);
 	nfcd_loc obj;
 	if (*p->s == '}')
 		obj = nfcd_add_object(p->cdp, 0);
 	else
 		obj = parse_members(p);
-	skip_char('}');
+	skip_char(p, '}');
 	return obj;
 }
 
@@ -245,32 +246,33 @@ nfcd_loc parse_name(struct Parser *p)
 
 nfcd_loc parse_members(struct Parser *p)
 {
-	struct NfcdLocVector names = {0};
-	struct NfcdLocVector values = {0};
+	struct LocBuffer names = {0};
+	struct LocBuffer values = {0};
 
-	while (true) {
+	while (1) {
 		nfcd_loc name = parse_name(p);
-		push_nfcdloc(names, key);
-		skip_whitespace();
-		skip_char(':');
-		skip_whitespace();
+		lb_push(p, &names, name);
+		skip_whitespace(p);
+		skip_char(p, ':');
+		skip_whitespace(p);
 		nfcd_loc value = parse_value(p);
-		push_nfcdloc(values, value);
-		skip_whitesspace();
+		lb_push(p, &values, value);
+		skip_whitespace(p);
 		if (*p->s == '}')
 			break;
+		skip_char(p, ',');
+		skip_whitespace(p);
 	}
 
 	nfcd_loc obj = nfcd_add_object(p->cdp, names.n);
 	for (int i=0; i<names.n; ++i)
-		nfcd_set(p->cdp, names.data[i], values.data[i]);
+		nfcd_set_loc(p->cdp, obj, names.data[i], values.data[i]);
 
-	temp_free(names.data);
-	temp_free(names.data);
+	lb_free(p, &names);
+	lb_free(p, &values);
 
 	return obj;
 }
-*/
 
 nfcd_loc parse_array(struct Parser *p)
 {
@@ -305,9 +307,7 @@ nfcd_loc parse_elements(struct Parser *p)
 	for (int i=0; i<elements.n; ++i)
 		nfcd_push(p->cdp, arr, elements.data[i]);
 
-	if (elements.data != elements.buffer)
-		temp_realloc(p, elements.data, sizeof(nfcd_loc)*elements.allocated, 0);
-	
+	lb_free(p, &elements);
 	return arr;
 }
 
@@ -393,6 +393,12 @@ static void cb_grow(struct Parser *p, struct CharBuffer *cb)
 		memcpy(cb->s, cb->buffer, cb->n);
 }
 
+static void cb_free(struct Parser *p, struct CharBuffer *cb)
+{
+	if (cb->s != cb->buffer)
+		temp_realloc(p, cb->s, cb->allocated, 0);
+}
+
 static inline void cb_push(struct Parser *p, struct CharBuffer *cb, char c)
 {
 	if (cb->n >= cb->allocated)
@@ -421,23 +427,18 @@ static void lb_grow(struct Parser *p, struct LocBuffer *lb)
 		memcpy(lb->data, lb->buffer, lb->n);
 }
 
+static void lb_free(struct Parser *p, struct LocBuffer *lb)
+{
+	if (lb->data != lb->buffer)
+		temp_realloc(p, lb->data, sizeof(nfcd_loc)*lb->allocated, 0);
+}
+
 static inline void lb_push(struct Parser *p, struct LocBuffer *lb, nfcd_loc loc)
 {
 	if (lb->n >= lb->allocated)
 		lb_grow(p, lb);
 	lb->data[lb->n++] = loc;
 }
-
-/*
-static void push(NfcdLocVector *v, nfcd_loc value)
-{
-	if (v->n >= v->allocated) {
-		int size = v->allocated < 16 ? 16 : v->allocated * 2;
-		v->data = temp_realloc(v->data, sizeof(nfcd_loc) * size);
-	}
-	v->data[v->n++] = value;
-}
-*/
 
 static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 {
@@ -615,6 +616,14 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 			char *s = "[1 2 3]";
 			const char *err = nfjp_parse(s, &cd);
 			assert_strequal(err, "1: Expected `,`, saw `2`");
+		}
+
+		{
+			char *s = "{}";
+			const char *err = nfjp_parse(s, &cd);
+			assert(err == 0);
+			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_OBJECT);
+			assert(nfcd_object_size(cd, nfcd_root(cd)) == 0);
 		}
 	}
 
