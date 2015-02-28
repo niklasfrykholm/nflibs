@@ -601,12 +601,12 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 		}
 
 		{
-			char *s = "[1, 2, 3]";
+			char *s = "[1,2, 3 ,4 , 5 ]";
 			const char *err = nfjp_parse(s, &cd);
 			assert(err == 0);
 			nfcd_loc arr = nfcd_root(cd);
 			assert(nfcd_type(cd, arr) == NFCD_TYPE_ARRAY);
-			assert(nfcd_array_size(cd, arr) == 3);
+			assert(nfcd_array_size(cd, arr) == 5);
 			nfcd_loc arr_1 = nfcd_array_item(cd, arr, 1);
 			assert(nfcd_type(cd, arr_1) == NFCD_TYPE_NUMBER);
 			assert(nfcd_to_number(cd, arr_1) == 2);
@@ -624,6 +624,24 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_OBJECT);
 			assert(nfcd_object_size(cd, nfcd_root(cd)) == 0);
+		}
+
+		{
+			char *s = "{\"name\" : \"Niklas\", \"age\" : 41}";
+			const char *err = nfjp_parse(s, &cd);
+			assert(err == 0);
+			nfcd_loc obj = nfcd_root(cd);
+			assert(nfcd_type(cd, obj) == NFCD_TYPE_OBJECT);
+			nfcd_loc name = nfcd_object_lookup(cd, obj, "name");
+			assert_strequal(nfcd_to_string(cd, name), "Niklas");
+			assert(nfcd_object_size(cd, obj) == 2);
+			assert_strequal(nfcd_object_key(cd, obj,1), "age");
+		}
+
+		{
+			char *s = "{1 2 3}";
+			const char *err = nfjp_parse(s, &cd);
+			assert_strequal(err, "1: Expected `\"`, saw `1`");
 		}
 	}
 
