@@ -7,8 +7,7 @@ struct nfjp_Settings
 	int implicit_root_object;
 	int optional_commas;
 	int equals_for_colon;
-
-	//int python_multiline_strings;
+	int python_multiline_strings;
 };
 
 const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp);
@@ -149,6 +148,22 @@ nfcd_loc parse_string(struct Parser *p)
 {
 	struct CharBuffer cb = {0};
 	skip_char(p, '"');
+
+	if (p->settings->python_multiline_strings && *p->s == '"' && p->s[1] == '"') {
+		p->s += 2;
+		while (*p->s && p->s[1] && p->s[2] &&
+			(*p->s != '"' || p->s[1] != '"' || p->s[2] != '"')) {
+			cb_push(p, &cb, *p->s);
+			++p->s;
+		}
+		skip_char(p, '"');
+		skip_char(p, '"');
+		skip_char(p, '"');
+		cb_push(p, &cb, 0);
+		nfcd_loc loc = nfcd_add_string(p->cdp, cb.s);
+		cb_free(p, &cb);
+		return loc;
+	}
 
 	while (1) {
 		if (*p->s == 0 || *p->s == '"')
@@ -888,6 +903,16 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 			settings.optional_commas = 1;
 			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
 			assert_strequal(err, "1: Expected `:`, saw `=`");
+		}
+
+		{
+			char *s = "\"\"\" Bla \" Bla \"\"\"";
+			struct nfjp_Settings settings = {0};
+			settings.python_multiline_strings = 1;
+			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
+			assert(err == 0);
+			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_STRING);
+			assert_strequal(nfcd_to_string(cd, nfcd_root(cd)), " Bla \" Bla ");
 		}
 	}
 
