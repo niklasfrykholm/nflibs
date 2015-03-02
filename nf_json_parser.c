@@ -1,18 +1,18 @@
 struct nfcd_ConfigData;
 
-/*
 struct nfjp_Settings
 {
-	int comments;
-	int naked_strings;
-	int implicit_root_object;
-	int ommit_commas;
-	int equal_sign;
-	int python_multiline_strings;	
+	int unquoted_names;
+
+	//int comments;
+	//int implicit_root_object;
+	//int ommit_commas;
+	//int equal_sign;
+	//int python_multiline_strings;
 };
-*/
 
 const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp);
+const char *nfjp_parse_with_settings(const char *s, struct nfcd_ConfigData **cdp, struct nfjp_Settings *settings);
 
 // ## Implementation
 
@@ -43,6 +43,7 @@ struct Parser
 	const char *s;
 	int line_number;
 	struct nfcd_ConfigData **cdp;
+	struct nfjp_Settings *settings;
 	char *error;
 	jmp_buf env;
 };
@@ -93,7 +94,13 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize);
 
 const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp)
 {
-	struct Parser p = {s, 1, cdp, 0};
+	struct nfjp_Settings settings = {0};
+	return nfjp_parse_with_settings(s, cdp, &settings);
+}
+
+const char *nfjp_parse_with_settings(const char *s, struct nfcd_ConfigData **cdp, struct nfjp_Settings *settings)
+{
+	struct Parser p = {s, 1, cdp, settings, 0};
 	if (setjmp(p.env))
 		return p.error;
 	skip_whitespace(&p);
@@ -241,6 +248,19 @@ nfcd_loc parse_object(struct Parser *p)
 
 nfcd_loc parse_name(struct Parser *p)
 {
+	skip_whitespace(p);
+	if (p->settings->unquoted_names && *p->s != '"') {
+		struct CharBuffer cb = {0};
+		while (!isspace(*p->s) && *p->s != ':') {
+			cb_push(p, &cb, *p->s);
+			++p->s;
+		}
+		cb_push(p, &cb, 0);
+		nfcd_loc loc = nfcd_add_string(p->cdp, cb.s);
+		cb_free(p, &cb);
+		return loc;
+	}
+
 	return parse_string(p);
 }
 
@@ -642,6 +662,20 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 			char *s = "{1 2 3}";
 			const char *err = nfjp_parse(s, &cd);
 			assert_strequal(err, "1: Expected `\"`, saw `1`");
+		}
+
+		{
+			char *s = "{name : \"Niklas\", age : 41}";
+			struct nfjp_Settings settings = {0};
+			settings.unquoted_names = 1;
+			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
+			assert(err == 0);
+			nfcd_loc obj = nfcd_root(cd);
+			assert(nfcd_type(cd, obj) == NFCD_TYPE_OBJECT);
+			nfcd_loc name = nfcd_object_lookup(cd, obj, "name");
+			assert_strequal(nfcd_to_string(cd, name), "Niklas");
+			assert(nfcd_object_size(cd, obj) == 2);
+			assert_strequal(nfcd_object_key(cd, obj,1), "age");
 		}
 	}
 
