@@ -3,6 +3,7 @@ struct nfcd_ConfigData;
 struct nfjp_Settings
 {
 	int unquoted_names;
+	int c_comments;
 
 	//int comments;
 	//int implicit_root_object;
@@ -366,10 +367,33 @@ nfcd_loc parse_null(struct Parser *p)
 
 static void skip_whitespace(struct Parser *p)
 {
-	while (isspace(*p->s)) {
-		if (*p->s == '\n')
+	while (isspace(*p->s) || *p->s == '/') {
+		if (*p->s == '\n') {
 			++p->line_number;
-		++p->s;
+			++p->s;
+		} else if (*p->s != '/') {
+			++p->s;
+		} else if (!p->settings->c_comments) {
+			return;
+		// C++ style comment
+		} else if (p->s[1] == '/') {
+			while (*p->s && *p->s != '\n')
+				++p->s;
+			++p->line_number;
+			++p->s;
+		// C style comment
+		} else if (p->s[1] == '*') {
+			p->s += 2;
+			while (*p->s && !(*p->s == '*' && p->s[1] == '/')) {
+				if (*p->s == '\n')
+					++p->line_number;
+				++p->s;
+			}
+			skip_char(p, '*');
+			skip_char(p, '/');
+		} else {
+			return;
+		}
 	}
 }
 
@@ -730,6 +754,40 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 			assert_strequal(nfcd_to_string(cd, name), "Niklas");
 			assert(nfcd_object_size(cd, obj) == 2);
 			assert_strequal(nfcd_object_key(cd, obj,1), "age");
+		}
+
+		{
+			char *s =
+				"// Some stuff here.\n"
+				"{name : \"Niklas\", /* inline */ age : 41}";
+			struct nfjp_Settings settings = {0};
+			settings.unquoted_names = 1;
+			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
+			assert_strequal(err, "1: Unexpected character `/`");
+		}
+
+		{
+			char *s =
+				"// Some stuff here.\n"
+				"{name : \"Niklas\", /* inline */ age : 41}";
+			struct nfjp_Settings settings = {0};
+			settings.unquoted_names = 1;
+			settings.c_comments = 1;
+			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
+			assert(err == 0);
+		}
+
+		{
+			char *s =
+				"// Some stuff here.\n"
+				"/* Some more * /** // \n"
+				"stuff */\n"
+				"z";
+			struct nfjp_Settings settings = {0};
+			settings.unquoted_names = 1;
+			settings.c_comments = 1;
+			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
+			assert_strequal(err, "4: Unexpected character `z`");
 		}
 	}
 
