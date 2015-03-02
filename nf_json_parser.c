@@ -6,8 +6,8 @@ struct nfjp_Settings
 	int c_comments;
 	int implicit_root_object;
 	int optional_commas;
+	int equals_for_colon;
 
-	//int equal_sign;
 	//int python_multiline_strings;
 };
 
@@ -259,12 +259,16 @@ nfcd_loc parse_object(struct Parser *p)
 	return obj;
 }
 
+#define isbarename(c) \
+	( ((c) >= 'a' && (c) <= 'z') || ((c) >= 'A' && (c) <= 'Z') || \
+	  ((c) >= '0' && (c) <= '9') || c == '_' || c == '-' )
+
 nfcd_loc parse_name(struct Parser *p)
 {
 	skip_whitespace(p);
-	if (p->settings->unquoted_names && *p->s != '"') {
+	if (p->settings->unquoted_names && isbarename(*p->s)) {
 		struct CharBuffer cb = {0};
-		while (!isspace(*p->s) && *p->s != ':') {
+		while (isbarename(*p->s)) {
 			cb_push(p, &cb, *p->s);
 			++p->s;
 		}
@@ -277,6 +281,8 @@ nfcd_loc parse_name(struct Parser *p)
 	return parse_string(p);
 }
 
+#undef isbarename
+
 nfcd_loc parse_members(struct Parser *p)
 {
 	struct LocBuffer names = {0};
@@ -286,7 +292,10 @@ nfcd_loc parse_members(struct Parser *p)
 		nfcd_loc name = parse_name(p);
 		lb_push(p, &names, name);
 		skip_whitespace(p);
-		skip_char(p, ':');
+		if (p->settings->equals_for_colon && *p->s == '=')
+			skip_char(p, '=');
+		else
+			skip_char(p, ':');
 		skip_whitespace(p);
 		nfcd_loc value = parse_value(p);
 		lb_push(p, &values, value);
@@ -852,6 +861,33 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 			settings.implicit_root_object = 1;
 			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
 			assert_strequal(err, "1: Expected `,`, saw `a`");
+		}
+
+		{
+			char *s = ",,name = \"Niklas\" age = 41, , ,,";
+			struct nfjp_Settings settings = {0};
+			settings.unquoted_names = 1;
+			settings.implicit_root_object = 1;
+			settings.optional_commas = 1;
+			settings.equals_for_colon = 1;
+			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
+			assert(err == 0);
+			nfcd_loc obj = nfcd_root(cd);
+			assert(nfcd_type(cd, obj) == NFCD_TYPE_OBJECT);
+			nfcd_loc name = nfcd_object_lookup(cd, obj, "name");
+			assert_strequal(nfcd_to_string(cd, name), "Niklas");
+			assert(nfcd_object_size(cd, obj) == 2);
+			assert_strequal(nfcd_object_key(cd, obj,1), "age");
+		}
+
+		{
+			char *s = ",,name = \"Niklas\" age = 41, , ,,";
+			struct nfjp_Settings settings = {0};
+			settings.unquoted_names = 1;
+			settings.implicit_root_object = 1;
+			settings.optional_commas = 1;
+			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
+			assert_strequal(err, "1: Expected `:`, saw `=`");
 		}
 	}
 
