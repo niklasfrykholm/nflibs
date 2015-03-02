@@ -92,6 +92,9 @@ static inline void lb_push(struct Parser *p, struct LocBuffer *lb, nfcd_loc loc)
 
 static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize);
 
+static unsigned parse_codepoint(struct Parser *p);
+static void cb_push_utf8_codepoint(struct Parser *p, struct CharBuffer *cb, unsigned codepoint);
+
 const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp)
 {
 	struct nfjp_Settings settings = {0};
@@ -146,16 +149,18 @@ nfcd_loc parse_string(struct Parser *p)
 			error(p, "Literal control character in string");
 		else if (*p->s == '\\') {
 			++p->s;
-			switch (*p->s) {
-				case '"': case '\\': case '/': cb_push(p, &cb, *p->s); break;
+			char c = *p->s;
+			++p->s;
+			switch (c) {
+				case '"': case '\\': case '/': cb_push(p, &cb, c); break;
 				case 'b': cb_push(p, &cb, '\b'); break;
 				case 'f': cb_push(p, &cb, '\f'); break;
 				case 'n': cb_push(p, &cb, '\n'); break;
 				case 'r': cb_push(p, &cb, '\r'); break;
 				case 't': cb_push(p, &cb, '\t'); break;
+				case 'u': cb_push_utf8_codepoint(p, &cb, parse_codepoint(p)); break;
 				default: error(p, "Unexpected character `%c`", *p->s);
 			}
-			++p->s;
 		} else {
 			cb_push(p, &cb, *p->s);
 			++p->s;
@@ -227,7 +232,7 @@ static nfcd_loc parse_number(struct Parser *p)
 		}
 	}
 
-	double v = (double)sign * ((double)intp + (double)fracp/(double)fracdiv) 
+	double v = (double)sign * ((double)intp + (double)fracp/(double)fracdiv)
 		* pow(10.0, (double)esign * (double)ep);
 
 	return nfcd_add_number(p->cdp, v);
@@ -460,6 +465,45 @@ static inline void lb_push(struct Parser *p, struct LocBuffer *lb, nfcd_loc loc)
 	lb->data[lb->n++] = loc;
 }
 
+static unsigned parse_codepoint(struct Parser *p)
+{
+	unsigned codepoint = 0;
+	for (int i=0; i<4; ++i) {
+		codepoint <<= 4;
+		char c = *p->s;
+		if (c >= 'a' && c <= 'f')
+			codepoint += (c - 'a') + 10;
+		else if (c >= 'A' && c <= 'F')
+			codepoint += (c - 'A') + 10;
+		else if (c >= '0' && c <= '9')
+			codepoint += c - '0';
+		else
+			error(p, "Unexpected character `%c`", c);
+		++p->s;
+	}
+	return codepoint;
+}
+
+static void cb_push_utf8_codepoint(struct Parser *p, struct CharBuffer *cb, unsigned codepoint)
+{
+	if (codepoint <= 0x7fu)
+		cb_push(p, cb, codepoint);
+	else if (codepoint <= 0x7ffu) {
+		cb_push(p, cb, 0xc0 | ((codepoint >> 6) & 0x1f));
+		cb_push(p, cb, 0x80 | ((codepoint >> 0) & 0x3f));
+	} else if (codepoint <= 0xffffu) {
+		cb_push(p, cb, 0xe0 | ((codepoint >> 12) & 0x0f));
+		cb_push(p, cb, 0x80 | ((codepoint >> 6) & 0x3f));
+		cb_push(p, cb, 0x80 | ((codepoint >> 0) & 0x3f));
+	} else if (codepoint <= 0x1fffffu) {
+		cb_push(p, cb, 0xf0 | ((codepoint >> 18) & 0x07));
+		cb_push(p, cb, 0x80 | ((codepoint >> 12) & 0x3f));
+		cb_push(p, cb, 0x80 | ((codepoint >> 6) & 0x3f));
+		cb_push(p, cb, 0x80 | ((codepoint >> 0) & 0x3f));
+	} else
+		error(p, "Not an UTF-8 codepoint `%u`", codepoint);
+}
+
 static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 {
 	void *realloc_ud;
@@ -610,6 +654,16 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 			assert(err == 0);
 			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_STRING);
 			assert_strequal(nfcd_to_string(cd, nfcd_root(cd)), "\"\\/\b\f\n\r\t");
+		}
+
+		{
+			char *s = "\"\\u00e4\\u6176\"";
+			char *dec = "ä慶";
+			const char *err = nfjp_parse(s, &cd);
+			assert(err == 0);
+			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_STRING);
+			const char *res = nfcd_to_string(cd, nfcd_root(cd));
+			assert_strequal(res, dec);
 		}
 
 		{
