@@ -5,9 +5,8 @@ struct nfjp_Settings
 	int unquoted_names;
 	int c_comments;
 	int implicit_root_object;
+	int optional_commas;
 
-	//int implicit_root_object;
-	//int ommit_commas;
 	//int equal_sign;
 	//int python_multiline_strings;
 };
@@ -294,7 +293,8 @@ nfcd_loc parse_members(struct Parser *p)
 		skip_whitespace(p);
 		if (*p->s == '}' || *p->s == 0)
 			break;
-		skip_char(p, ',');
+		if (!p->settings->optional_commas)
+			skip_char(p, ',');
 		skip_whitespace(p);
 	}
 
@@ -333,7 +333,8 @@ nfcd_loc parse_elements(struct Parser *p)
 		skip_whitespace(p);
 		if (*p->s == ']')
 			break;
-		skip_char(p, ',');
+		if (!p->settings->optional_commas)
+			skip_char(p, ',');
 	}
 	skip_char(p, ']');
 
@@ -375,30 +376,33 @@ nfcd_loc parse_null(struct Parser *p)
 
 static void skip_whitespace(struct Parser *p)
 {
-	while (isspace(*p->s) || *p->s == '/') {
+	while (isspace(*p->s) || *p->s == '/' || *p->s == ',') {
 		if (*p->s == '\n') {
 			++p->line_number;
 			++p->s;
-		} else if (*p->s != '/') {
+		} else if (isspace(*p->s)) {
 			++p->s;
-		} else if (!p->settings->c_comments) {
-			return;
-		// C++ style comment
-		} else if (p->s[1] == '/') {
-			while (*p->s && *p->s != '\n')
+		} else if (*p->s == '/' && p->settings->c_comments) {
+			// C++ style comment
+			if (p->s[1] == '/') {
+				while (*p->s && *p->s != '\n')
+					++p->s;
+				++p->line_number;
 				++p->s;
-			++p->line_number;
+			// C style comment
+			} else if (p->s[1] == '*') {
+				p->s += 2;
+				while (*p->s && !(*p->s == '*' && p->s[1] == '/')) {
+					if (*p->s == '\n')
+						++p->line_number;
+					++p->s;
+				}
+				skip_char(p, '*');
+				skip_char(p, '/');
+			} else
+				return;
+		} else if (*p->s ==',' && p->settings->optional_commas) {
 			++p->s;
-		// C style comment
-		} else if (p->s[1] == '*') {
-			p->s += 2;
-			while (*p->s && !(*p->s == '*' && p->s[1] == '/')) {
-				if (*p->s == '\n')
-					++p->line_number;
-				++p->s;
-			}
-			skip_char(p, '*');
-			skip_char(p, '/');
 		} else {
 			return;
 		}
@@ -823,6 +827,31 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 			settings.unquoted_names = 1;
 			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
 			assert_strequal(err, "1: Expected `u`, saw `a`");
+		}
+
+		{
+			char *s = ",,name : \"Niklas\" age : 41, , ,,";
+			struct nfjp_Settings settings = {0};
+			settings.unquoted_names = 1;
+			settings.implicit_root_object = 1;
+			settings.optional_commas = 1;
+			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
+			assert(err == 0);
+			nfcd_loc obj = nfcd_root(cd);
+			assert(nfcd_type(cd, obj) == NFCD_TYPE_OBJECT);
+			nfcd_loc name = nfcd_object_lookup(cd, obj, "name");
+			assert_strequal(nfcd_to_string(cd, name), "Niklas");
+			assert(nfcd_object_size(cd, obj) == 2);
+			assert_strequal(nfcd_object_key(cd, obj,1), "age");
+		}
+
+		{
+			char *s = "name : \"Niklas\" age : 41";
+			struct nfjp_Settings settings = {0};
+			settings.unquoted_names = 1;
+			settings.implicit_root_object = 1;
+			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
+			assert_strequal(err, "1: Expected `,`, saw `a`");
 		}
 	}
 
