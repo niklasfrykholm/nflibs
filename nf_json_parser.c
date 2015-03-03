@@ -612,175 +612,158 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 		}
 	}
 
-	#define assert_numequal(v, e) assert(fabsf((v)-(e)) < 1e-7);
+	static void fail(const char *s, const char *format, ...)
+	{
+		const int ERROR_BUFFER_SIZE = 200;
+		char error[ERROR_BUFFER_SIZE];
+
+		va_list ap;
+		va_start(ap, format);
+		vsnprintf(error, ERROR_BUFFER_SIZE, format, ap);
+		va_end(ap);
+
+		fprintf(stderr, "%s\n\n%s\n", s, error);
+		exit(1);
+	}
+
+	static void test_type(struct nfcd_ConfigData **cd, const char *s, int expected_type)
+	{
+		const char *err = nfjp_parse(s, cd);
+		if (err)
+			fail(s,"%s", err);
+		nfcd_loc root = nfcd_root(*cd);
+		int type = nfcd_type(*cd, root);
+		if (type != expected_type)
+			fail(s, "Expected type `%i`, saw `%i`", expected_type, type);
+	}
+
+	static void test_error(struct nfcd_ConfigData **cd, const char *s, const char *expected_err)
+	{
+		const char *err = nfjp_parse(s, cd);
+		if (err == 0)
+			fail(s, "Expected error `%s`, saw no error", expected_err);
+		if (expected_err == 0 || strcmp(err, expected_err) != 0)
+			fail(s, "Expected error `%s`, saw `%s`", expected_err, err);
+	}
+
+	static void test_item(struct nfcd_ConfigData *cd, const char *s, nfcd_loc item, char format, va_list *vl)
+	{
+		if (format == 'f') {
+			int type = nfcd_type(cd, item);
+			if (type != NFCD_TYPE_NUMBER)
+				fail(s, "Expected type `%i`, saw `%i`", NFCD_TYPE_NUMBER, type);
+			double number = nfcd_to_number(cd, item);
+			double expected_number = va_arg(*vl, double);
+			if (fabsf(number-expected_number) > 1e-1)
+				fail(s, "Expected `%lf`, saw `%lf`", expected_number, number);
+		} else if (format == 's') {
+			int type = nfcd_type(cd, item);
+			if (type != NFCD_TYPE_STRING)
+				fail(s, "Expected type `%i`, saw `%i`", NFCD_TYPE_STRING, type);
+			const char *string = nfcd_to_string(cd, item);
+			const char *expected_string = va_arg(*vl, const char *);
+			if (strcmp(string, expected_string))
+				fail(s, "Expected `%s`, saw `%s`", expected_string, string);
+		} else
+			fail(s, "Unexpected format string `%c`\n", format);
+	}
+
+	static void test_number(struct nfcd_ConfigData **cd, const char *s, double expected_number)
+	{
+		test_type(cd, s, NFCD_TYPE_NUMBER);
+		double number = nfcd_to_number(*cd, nfcd_root(*cd));
+		if (fabsf(number-expected_number) > 1e-1)
+			fail(s, "Expected `%lf`, saw `%lf`", expected_number, number);
+	}
+
+	static void test_string(struct nfcd_ConfigData **cd, const char *s, const char *expected_string)
+	{
+		test_type(cd, s, NFCD_TYPE_STRING);
+		const char *string = nfcd_to_string(*cd, nfcd_root(*cd));
+		if (strcmp(string, expected_string))
+			fail(s, "Expected `%s`, saw `%s`", expected_string, string);
+	}
+
+	static void test_array(struct nfcd_ConfigData **cd, const char *s, const char *format, ...)
+	{
+		test_type(cd, s, NFCD_TYPE_ARRAY);
+		nfcd_loc arr = nfcd_root(*cd);
+		int sz = nfcd_array_size(*cd, arr);
+		if (sz != strlen(format))
+			fail("%s\n\nExpected array size `%i`, saw `%i`\n", s, strlen(format), sz);
+
+		va_list vl;
+		va_start(vl, format);
+
+		for (int i=0; i<sz; ++i) {
+			nfcd_loc item = nfcd_array_item(*cd, arr, i);
+			test_item(*cd, s, item, format[i], &vl);
+		}
+	}
+
+	static void test_object(struct nfcd_ConfigData **cd, const char *s, const char *format, ...)
+	{
+		test_type(cd, s, NFCD_TYPE_OBJECT);
+		nfcd_loc obj = nfcd_root(*cd);
+		int sz = nfcd_object_size(*cd, obj);
+		if (sz != strlen(format))
+			fail("%s\n\nExpected array size `%i`, saw `%i`\n", s, strlen(format), sz);
+
+		va_list vl;
+		va_start(vl, format);
+
+		for (int i=0; i<sz; ++i) {
+			const char *key = va_arg(vl, const char *);
+			nfcd_loc item = nfcd_object_lookup(*cd, obj, key);
+			test_item(*cd, s, item, format[i], &vl);
+		}
+	}
 
 	int main(int argc, char **argv)
 	{
 		struct nfcd_ConfigData *cd = nfcd_make(realloc_f, 0, 0, 0);
 		assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_NULL);
 
-		{
-			char *s = "null";
-			const char *err = nfjp_parse(s, &cd);
-			assert(err == 0);
-			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_NULL);
-		}
-		{
-			char *s = "true";
-			const char *err = nfjp_parse(s, &cd);
-			assert(err == 0);
-			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_TRUE);
-		}
-		{
-			char *s = "false";
-			const char *err = nfjp_parse(s, &cd);
-			assert(err == 0);
-			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_FALSE);
-		}
-
-		{
-			char *s = "fulse";
-			const char *err = nfjp_parse(s, &cd);
-			assert_strequal(err, "1: Expected `a`, saw `u`");
-		}
-
-		{
-			char *s = "\n\n    \tfalse   \n\n";
-			const char *err = nfjp_parse(s, &cd);
-			assert(err == 0);
-			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_FALSE);
-		}
-		{
-			char *s = "\n\nfulse";
-			const char *err = nfjp_parse(s, &cd);
-			assert_strequal(err, "3: Expected `a`, saw `u`");
-		}
-		{
-			char *s = "\n\n    \tfalse   \n\nx";
-			const char *err = nfjp_parse(s, &cd);
-			assert_strequal(err, "5: Unexpected character `x`");
-		}
-
-		{
-			char *s = "3.14";
-			const char *err = nfjp_parse(s, &cd);
-			assert(err == 0);
-			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_NUMBER);
-			assert_numequal(nfcd_to_number(cd, nfcd_root(cd)), 3.14);
-		}
-
-		{
-			char *s = "-3.14e-1";
-			const char *err = nfjp_parse(s, &cd);
-			assert(err == 0);
-			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_NUMBER);
-			assert_numequal(nfcd_to_number(cd, nfcd_root(cd)), -0.314);
-		}
-
-		{
-			char *s[] = {"--3.14", ".1", "-.1", "00", "00.0", "0e",
-				"0.", "0.e1", "0.0ee", "0.0++e"};
-			int n = sizeof(s) / sizeof(s[0]);
-			for (int i=0; i<n; ++i) {
-				const char *err = nfjp_parse(s[i], &cd);
-				assert(err != 0);
-			}
-		}
-
-		{
-			char *s = "\"niklas\"";
-			const char *err = nfjp_parse(s, &cd);
-			assert(err == 0);
-			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_STRING);
-			assert_strequal(nfcd_to_string(cd, nfcd_root(cd)), "niklas");
-		}
-
-		{
-			char *s = "\"01234567890123456789012345678901234567890123456789"
-				        "01234567890123456789012345678901234567890123456789"
-				        "01234567890123456789012345678901234567890123456789"
-				        "01234567890123456789012345678901234567890123456789\"";
-			const char *err = nfjp_parse(s, &cd);
-			assert(err == 0);
-			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_STRING);
-			assert(strlen(nfcd_to_string(cd, nfcd_root(cd))) == 200);
-		}
-
-		{
-			char *s = "\"\n\"";
-			const char *err = nfjp_parse(s, &cd);
-			assert_strequal(err, "1: Literal control character in string");
-		}
-
-		{
-			char *s = "\"\\\"\\\\\\/\\b\\f\\n\\r\\t\"";
-			const char *err = nfjp_parse(s, &cd);
-			assert(err == 0);
-			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_STRING);
-			assert_strequal(nfcd_to_string(cd, nfcd_root(cd)), "\"\\/\b\f\n\r\t");
-		}
-
-		{
-			char *s = "\"\\u00e4\\u6176\"";
-			char *dec = "ä慶";
-			const char *err = nfjp_parse(s, &cd);
-			assert(err == 0);
-			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_STRING);
-			const char *res = nfcd_to_string(cd, nfcd_root(cd));
-			assert_strequal(res, dec);
-		}
-
-		{
-			char *s = "[]";
-			const char *err = nfjp_parse(s, &cd);
-			assert(err == 0);
-			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_ARRAY);
-			assert(nfcd_array_size(cd, nfcd_root(cd)) == 0);
-		}
-
-		{
-			char *s = "[1,2, 3 ,4 , 5 ]";
-			const char *err = nfjp_parse(s, &cd);
-			assert(err == 0);
-			nfcd_loc arr = nfcd_root(cd);
-			assert(nfcd_type(cd, arr) == NFCD_TYPE_ARRAY);
-			assert(nfcd_array_size(cd, arr) == 5);
-			nfcd_loc arr_1 = nfcd_array_item(cd, arr, 1);
-			assert(nfcd_type(cd, arr_1) == NFCD_TYPE_NUMBER);
-			assert(nfcd_to_number(cd, arr_1) == 2);
-		}
-
-		{
-			char *s = "[1 2 3]";
-			const char *err = nfjp_parse(s, &cd);
-			assert_strequal(err, "1: Expected `,`, saw `2`");
-		}
-
-		{
-			char *s = "{}";
-			const char *err = nfjp_parse(s, &cd);
-			assert(err == 0);
-			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_OBJECT);
-			assert(nfcd_object_size(cd, nfcd_root(cd)) == 0);
-		}
-
-		{
-			char *s = "{\"name\" : \"Niklas\", \"age\" : 41}";
-			const char *err = nfjp_parse(s, &cd);
-			assert(err == 0);
-			nfcd_loc obj = nfcd_root(cd);
-			assert(nfcd_type(cd, obj) == NFCD_TYPE_OBJECT);
-			nfcd_loc name = nfcd_object_lookup(cd, obj, "name");
-			assert_strequal(nfcd_to_string(cd, name), "Niklas");
-			assert(nfcd_object_size(cd, obj) == 2);
-			assert_strequal(nfcd_object_key(cd, obj,1), "age");
-		}
-
-		{
-			char *s = "{1 2 3}";
-			const char *err = nfjp_parse(s, &cd);
-			assert_strequal(err, "1: Expected `\"`, saw `1`");
-		}
+		test_type(&cd, "null", NFCD_TYPE_NULL);
+		test_type(&cd, "true", NFCD_TYPE_TRUE);
+		test_type(&cd, "false", NFCD_TYPE_FALSE);
+		test_error(&cd, "fulse", "1: Expected `a`, saw `u`");
+		test_type(&cd, "\n\n    \tfalse   \n\n", NFCD_TYPE_FALSE);
+		test_error(&cd, "\n\n    \tfalse   \n\nx", "5: Unexpected character `x`");
+		test_error(&cd, "\n\nfulse", "3: Expected `a`, saw `u`");
+		test_number(&cd, "3.14", 3.14);
+		test_number(&cd, "-3.14e-1", -0.314);
+		test_error(&cd, "--3.14", "1: Bad number format");
+		test_error(&cd, ".1", "1: Unexpected character `.`");
+		test_error(&cd, "-.1", "1: Bad number format");
+		test_error(&cd, "00", "1: Unexpected character `0`");
+		test_error(&cd, "00.0", "1: Unexpected character `0`");
+		test_error(&cd, "0e", "1: Bad number format");
+		test_error(&cd, "0.", "1: Bad number format");
+		test_error(&cd, "0.e1", "1: Bad number format");
+		test_error(&cd, "0.0ee", "1: Bad number format");
+		test_error(&cd, "0.0++e", "1: Unexpected character `+`");
+		test_string(&cd, "\"niklas\"", "niklas");
+		test_string(&cd,
+			"\"01234567890123456789012345678901234567890123456789"
+			"01234567890123456789012345678901234567890123456789"
+			"01234567890123456789012345678901234567890123456789"
+			"01234567890123456789012345678901234567890123456789\"",
+			"01234567890123456789012345678901234567890123456789"
+			"01234567890123456789012345678901234567890123456789"
+			"01234567890123456789012345678901234567890123456789"
+			"01234567890123456789012345678901234567890123456789"
+		);
+		test_error(&cd, "\"\n\"", "1: Literal control character in string");
+		test_string(&cd, "\"\\\"\\\\\\/\\b\\f\\n\\r\\t\"", "\"\\/\b\f\n\r\t");
+		test_string(&cd, "\"\\u00e4\\u6176\"","ä慶");
+		test_array(&cd, "[]", "");
+		test_array(&cd, "[1,2, 3 ,4 , 5 ]", "fffff", 1.0, 2.0, 3.0, 4.0, 5.0);
+		test_error(&cd, "[1 2 3]", "1: Expected `,`, saw `2`");
+		test_object(&cd, "{}", "");
+		test_object(&cd, "{\"name\" : \"Niklas\", \"age\" : 41}",
+			"sf", "name", "Niklas", "age", 41.0);
+		test_error(&cd, "{1 2 3}", "1: Expected `\"`, saw `1`");
 
 		{
 			char *s = "{name : \"Niklas\", age : 41}";
