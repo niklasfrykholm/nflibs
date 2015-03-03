@@ -152,7 +152,7 @@ nfcd_loc parse_string(struct Parser *p)
 	if (p->settings->python_multiline_strings && *p->s == '"' && p->s[1] == '"') {
 		p->s += 2;
 		while (*p->s && p->s[1] && p->s[2] &&
-			(*p->s != '"' || p->s[1] != '"' || p->s[2] != '"')) {
+			(*p->s != '"' || p->s[1] != '"' || p->s[2] != '"' || p->s[3] == '"')) {
 			cb_push(p, &cb, *p->s);
 			++p->s;
 		}
@@ -435,8 +435,12 @@ static void skip_whitespace(struct Parser *p)
 
 static void skip_char(struct Parser *p, char c)
 {
-	if (*p->s != c)
-		error(p, "Expected `%c`, saw `%c`", c, *p->s);
+	if (*p->s != c) {
+		if (*p->s >= 32)
+			error(p, "Expected `%c`, saw `%c`", c, *p->s);
+		else
+			error(p, "Expected `%c`, saw `\\x%02x`", c, *p->s);
+	}
 	++p->s;
 }
 
@@ -591,6 +595,7 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 	int nfcd_array_size(struct nfcd_ConfigData *cd, nfcd_loc arr);
 	nfcd_loc nfcd_array_item(struct nfcd_ConfigData *cd, nfcd_loc arr, int i);
 	int nfcd_object_size(struct nfcd_ConfigData *cd, nfcd_loc object);
+	nfcd_loc nfcd_object_keyloc(struct nfcd_ConfigData *cd, nfcd_loc object, int i);
 	const char *nfcd_object_key(struct nfcd_ConfigData *cd, nfcd_loc object, int i);
 	nfcd_loc nfcd_object_value(struct nfcd_ConfigData *cd, nfcd_loc object, int i);
 	nfcd_loc nfcd_object_lookup(struct nfcd_ConfigData *cd, nfcd_loc object, const char *key);
@@ -598,18 +603,6 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 	static void *realloc_f(void *ud, void *ptr, int osize, int nsize, const char *file, int line)
 	{
 		return realloc(ptr, nsize);
-	}
-
-	void assert_strequal(const char *s, const char *expected)
-	{
-		if (s == 0) {
-			fprintf(stderr, "Expected `%s`, saw `NULL`\n", expected);
-			assert(0);
-		}
-		if (strcmp(s, expected)) {
-			fprintf(stderr, "Expected `%s`, saw `%s`\n", expected, s);
-			assert(0);
-		}
 	}
 
 	static void fail(const char *s, const char *format, ...)
@@ -626,277 +619,171 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 		exit(1);
 	}
 
-	static void test_type(struct nfcd_ConfigData **cd, const char *s, int expected_type)
+	static void test_error(struct nfjp_Settings *settings, struct nfcd_ConfigData **cd, const char *s, const char *expected_err)
 	{
-		const char *err = nfjp_parse(s, cd);
-		if (err)
-			fail(s,"%s", err);
-		nfcd_loc root = nfcd_root(*cd);
-		int type = nfcd_type(*cd, root);
-		if (type != expected_type)
-			fail(s, "Expected type `%i`, saw `%i`", expected_type, type);
-	}
-
-	static void test_error(struct nfcd_ConfigData **cd, const char *s, const char *expected_err)
-	{
-		const char *err = nfjp_parse(s, cd);
+		const char *err = nfjp_parse_with_settings(s, cd, settings);
 		if (err == 0)
 			fail(s, "Expected error `%s`, saw no error", expected_err);
 		if (expected_err == 0 || strcmp(err, expected_err) != 0)
 			fail(s, "Expected error `%s`, saw `%s`", expected_err, err);
 	}
 
-	static void test_item(struct nfcd_ConfigData *cd, const char *s, nfcd_loc item, char format, va_list *vl)
+	void test(struct nfjp_Settings *settings, struct nfcd_ConfigData **cd, const char *json, const char *format, ...)
 	{
-		if (format == 'f') {
-			int type = nfcd_type(cd, item);
-			if (type != NFCD_TYPE_NUMBER)
-				fail(s, "Expected type `%i`, saw `%i`", NFCD_TYPE_NUMBER, type);
-			double number = nfcd_to_number(cd, item);
-			double expected_number = va_arg(*vl, double);
-			if (fabsf(number-expected_number) > 1e-1)
-				fail(s, "Expected `%lf`, saw `%lf`", expected_number, number);
-		} else if (format == 's') {
-			int type = nfcd_type(cd, item);
-			if (type != NFCD_TYPE_STRING)
-				fail(s, "Expected type `%i`, saw `%i`", NFCD_TYPE_STRING, type);
-			const char *string = nfcd_to_string(cd, item);
-			const char *expected_string = va_arg(*vl, const char *);
-			if (strcmp(string, expected_string))
-				fail(s, "Expected `%s`, saw `%s`", expected_string, string);
-		} else
-			fail(s, "Unexpected format string `%c`\n", format);
-	}
+		const char *err = nfjp_parse_with_settings(json, cd, settings);
+		if (err)
+			fail(json, "%s", err);
+		nfcd_loc root = nfcd_root(*cd);
 
-	static void test_number(struct nfcd_ConfigData **cd, const char *s, double expected_number)
-	{
-		test_type(cd, s, NFCD_TYPE_NUMBER);
-		double number = nfcd_to_number(*cd, nfcd_root(*cd));
-		if (fabsf(number-expected_number) > 1e-1)
-			fail(s, "Expected `%lf`, saw `%lf`", expected_number, number);
-	}
-
-	static void test_string(struct nfcd_ConfigData **cd, const char *s, const char *expected_string)
-	{
-		test_type(cd, s, NFCD_TYPE_STRING);
-		const char *string = nfcd_to_string(*cd, nfcd_root(*cd));
-		if (strcmp(string, expected_string))
-			fail(s, "Expected `%s`, saw `%s`", expected_string, string);
-	}
-
-	static void test_array(struct nfcd_ConfigData **cd, const char *s, const char *format, ...)
-	{
-		test_type(cd, s, NFCD_TYPE_ARRAY);
-		nfcd_loc arr = nfcd_root(*cd);
-		int sz = nfcd_array_size(*cd, arr);
-		if (sz != strlen(format))
-			fail("%s\n\nExpected array size `%i`, saw `%i`\n", s, strlen(format), sz);
+		const int STACK_MAX = 16;
+		nfcd_loc stack[STACK_MAX];
+		int stack_top = 0;
+		stack[stack_top++] = root;
 
 		va_list vl;
 		va_start(vl, format);
 
-		for (int i=0; i<sz; ++i) {
-			nfcd_loc item = nfcd_array_item(*cd, arr, i);
-			test_item(*cd, s, item, format[i], &vl);
+		nfcd_loc END_OF_ARRAY = -1;
+		nfcd_loc END_OF_OBJECT = -2;
+
+		while (*format) {
+			if (stack_top == 0)
+				fail(json, "Stack empty!");
+			nfcd_loc item = stack[--stack_top];
+			switch (*format) {
+				case 'n': if (nfcd_type(*cd, item) != NFCD_TYPE_NULL) fail(json, "Expected `null`"); break;
+				case 't': if (nfcd_type(*cd, item) != NFCD_TYPE_TRUE) fail(json, "Expected `true`"); break;
+				case 'f': if (nfcd_type(*cd, item) != NFCD_TYPE_FALSE) fail(json, "Expected `false`"); break;
+				case 'd': {
+					double number = nfcd_to_number(*cd, item);
+					double expected_number = va_arg(vl, double);
+					if (fabsf(number-expected_number) > 1e-1)
+						fail(json, "Expected `%lf`, saw `%lf`", expected_number, number);
+					break;
+				}
+				case 's': case 'k': {
+					const char *string = nfcd_to_string(*cd, item);
+					const char *expected_string = va_arg(vl, const char *);
+					if (strcmp(string, expected_string))
+						fail(json, "Expected `%s`, saw `%s`", expected_string, string);
+					break;
+				}
+				case '[': {
+					if (nfcd_type(*cd, item) != NFCD_TYPE_ARRAY)
+						fail(json, "Expected array");
+					assert(stack_top < STACK_MAX);
+					stack[stack_top++] = END_OF_ARRAY;
+					int n = nfcd_array_size(*cd, item);
+					for (int i=n-1; i>=0; --i) {
+						nfcd_loc ai = nfcd_array_item(*cd, item, i);
+						assert(stack_top < STACK_MAX);
+						stack[stack_top++] = ai;
+					}
+					break;
+				}
+				case ']':
+					if (item != END_OF_ARRAY)
+						fail(json, "Did not match end of array");
+					break;
+				case '{': {
+					if (nfcd_type(*cd, item) != NFCD_TYPE_OBJECT)
+						fail(json, "Expected object");
+					assert(stack_top < STACK_MAX);
+					stack[stack_top++] = END_OF_OBJECT;
+					int n = nfcd_object_size(*cd, item);
+					for (int i=n-1; i>=0; --i) {
+						nfcd_loc ok = nfcd_object_keyloc(*cd, item, i);
+						nfcd_loc ov = nfcd_object_value(*cd, item, i);
+						assert(stack_top < STACK_MAX);
+						stack[stack_top++] = ov;
+						assert(stack_top < STACK_MAX);
+						stack[stack_top++] = ok;
+					}
+					break;
+				}
+				case '}':
+					if (item != END_OF_OBJECT)
+						fail(json, "Did not match end of object");
+					break;
+				default: fail(json, "Bad format flag `%c`", *format);
+			}
+			++format;
 		}
-	}
 
-	static void test_object(struct nfcd_ConfigData **cd, const char *s, const char *format, ...)
-	{
-		test_type(cd, s, NFCD_TYPE_OBJECT);
-		nfcd_loc obj = nfcd_root(*cd);
-		int sz = nfcd_object_size(*cd, obj);
-		if (sz != strlen(format))
-			fail("%s\n\nExpected array size `%i`, saw `%i`\n", s, strlen(format), sz);
+		va_end(vl);
 
-		va_list vl;
-		va_start(vl, format);
-
-		for (int i=0; i<sz; ++i) {
-			const char *key = va_arg(vl, const char *);
-			nfcd_loc item = nfcd_object_lookup(*cd, obj, key);
-			test_item(*cd, s, item, format[i], &vl);
-		}
+		if (stack_top != 0)
+			fail(json, "Unconsumed items");
 	}
 
 	int main(int argc, char **argv)
 	{
+		struct nfjp_Settings s = {0};
+
 		struct nfcd_ConfigData *cd = nfcd_make(realloc_f, 0, 0, 0);
 		assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_NULL);
 
-		test_type(&cd, "null", NFCD_TYPE_NULL);
-		test_type(&cd, "true", NFCD_TYPE_TRUE);
-		test_type(&cd, "false", NFCD_TYPE_FALSE);
-		test_error(&cd, "fulse", "1: Expected `a`, saw `u`");
-		test_type(&cd, "\n\n    \tfalse   \n\n", NFCD_TYPE_FALSE);
-		test_error(&cd, "\n\n    \tfalse   \n\nx", "5: Unexpected character `x`");
-		test_error(&cd, "\n\nfulse", "3: Expected `a`, saw `u`");
-		test_number(&cd, "3.14", 3.14);
-		test_number(&cd, "-3.14e-1", -0.314);
-		test_error(&cd, "--3.14", "1: Bad number format");
-		test_error(&cd, ".1", "1: Unexpected character `.`");
-		test_error(&cd, "-.1", "1: Bad number format");
-		test_error(&cd, "00", "1: Unexpected character `0`");
-		test_error(&cd, "00.0", "1: Unexpected character `0`");
-		test_error(&cd, "0e", "1: Bad number format");
-		test_error(&cd, "0.", "1: Bad number format");
-		test_error(&cd, "0.e1", "1: Bad number format");
-		test_error(&cd, "0.0ee", "1: Bad number format");
-		test_error(&cd, "0.0++e", "1: Unexpected character `+`");
-		test_string(&cd, "\"niklas\"", "niklas");
-		test_string(&cd,
+		test(&s, &cd, "null", "n");
+		test(&s, &cd, "true", "t");
+		test(&s, &cd, "false", "f");
+		test_error(&s, &cd, "fulse", "1: Expected `a`, saw `u`");
+		test(&s, &cd, "\n\n    \tfalse   \n\n", "f");
+		test_error(&s, &cd, "\n\n    \tfalse   \n\nx", "5: Unexpected character `x`");
+		test_error(&s, &cd, "\n\nfulse", "3: Expected `a`, saw `u`");
+		test(&s, &cd, "3.14", "d", 3.14);
+		test(&s, &cd, "-3.14e-1", "d", -0.314);
+		test_error(&s, &cd, "--3.14", "1: Bad number format");
+		test_error(&s, &cd, ".1", "1: Unexpected character `.`");
+		test_error(&s, &cd, "-.1", "1: Bad number format");
+		test_error(&s, &cd, "00", "1: Unexpected character `0`");
+		test_error(&s, &cd, "00.0", "1: Unexpected character `0`");
+		test_error(&s, &cd, "0e", "1: Bad number format");
+		test_error(&s, &cd, "0.", "1: Bad number format");
+		test_error(&s, &cd, "0.e1", "1: Bad number format");
+		test_error(&s, &cd, "0.0ee", "1: Bad number format");
+		test_error(&s, &cd, "0.0++e", "1: Unexpected character `+`");
+		test(&s, &cd, "\"niklas\"", "s", "niklas");
+		test(&s, &cd,
 			"\"01234567890123456789012345678901234567890123456789"
 			"01234567890123456789012345678901234567890123456789"
 			"01234567890123456789012345678901234567890123456789"
-			"01234567890123456789012345678901234567890123456789\"",
+			"01234567890123456789012345678901234567890123456789\"", "s",
 			"01234567890123456789012345678901234567890123456789"
 			"01234567890123456789012345678901234567890123456789"
 			"01234567890123456789012345678901234567890123456789"
 			"01234567890123456789012345678901234567890123456789"
 		);
-		test_error(&cd, "\"\n\"", "1: Literal control character in string");
-		test_string(&cd, "\"\\\"\\\\\\/\\b\\f\\n\\r\\t\"", "\"\\/\b\f\n\r\t");
-		test_string(&cd, "\"\\u00e4\\u6176\"","ä慶");
-		test_array(&cd, "[]", "");
-		test_array(&cd, "[1,2, 3 ,4 , 5 ]", "fffff", 1.0, 2.0, 3.0, 4.0, 5.0);
-		test_error(&cd, "[1 2 3]", "1: Expected `,`, saw `2`");
-		test_object(&cd, "{}", "");
-		test_object(&cd, "{\"name\" : \"Niklas\", \"age\" : 41}",
-			"sf", "name", "Niklas", "age", 41.0);
-		test_error(&cd, "{1 2 3}", "1: Expected `\"`, saw `1`");
-
-		{
-			char *s = "{name : \"Niklas\", age : 41}";
-			struct nfjp_Settings settings = {0};
-			settings.unquoted_names = 1;
-			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
-			assert(err == 0);
-			nfcd_loc obj = nfcd_root(cd);
-			assert(nfcd_type(cd, obj) == NFCD_TYPE_OBJECT);
-			nfcd_loc name = nfcd_object_lookup(cd, obj, "name");
-			assert_strequal(nfcd_to_string(cd, name), "Niklas");
-			assert(nfcd_object_size(cd, obj) == 2);
-			assert_strequal(nfcd_object_key(cd, obj,1), "age");
-		}
-
-		{
-			char *s =
-				"// Some stuff here.\n"
-				"{name : \"Niklas\", /* inline */ age : 41}";
-			struct nfjp_Settings settings = {0};
-			settings.unquoted_names = 1;
-			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
-			assert_strequal(err, "1: Unexpected character `/`");
-		}
-
-		{
-			char *s =
-				"// Some stuff here.\n"
-				"{name : \"Niklas\", /* inline */ age : 41}";
-			struct nfjp_Settings settings = {0};
-			settings.unquoted_names = 1;
-			settings.c_comments = 1;
-			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
-			assert(err == 0);
-		}
-
-		{
-			char *s =
-				"// Some stuff here.\n"
-				"/* Some more * /** // \n"
-				"stuff */\n"
-				"z";
-			struct nfjp_Settings settings = {0};
-			settings.unquoted_names = 1;
-			settings.c_comments = 1;
-			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
-			assert_strequal(err, "4: Unexpected character `z`");
-		}
-
-		{
-			char *s = "name : \"Niklas\", age : 41";
-			struct nfjp_Settings settings = {0};
-			settings.unquoted_names = 1;
-			settings.implicit_root_object = 1;
-			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
-			assert(err == 0);
-			nfcd_loc obj = nfcd_root(cd);
-			assert(nfcd_type(cd, obj) == NFCD_TYPE_OBJECT);
-			nfcd_loc name = nfcd_object_lookup(cd, obj, "name");
-			assert_strequal(nfcd_to_string(cd, name), "Niklas");
-			assert(nfcd_object_size(cd, obj) == 2);
-			assert_strequal(nfcd_object_key(cd, obj,1), "age");
-		}
-
-		{
-			char *s = "name : \"Niklas\", age : 41";
-			struct nfjp_Settings settings = {0};
-			settings.unquoted_names = 1;
-			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
-			assert_strequal(err, "1: Expected `u`, saw `a`");
-		}
-
-		{
-			char *s = ",,name : \"Niklas\" age : 41, , ,,";
-			struct nfjp_Settings settings = {0};
-			settings.unquoted_names = 1;
-			settings.implicit_root_object = 1;
-			settings.optional_commas = 1;
-			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
-			assert(err == 0);
-			nfcd_loc obj = nfcd_root(cd);
-			assert(nfcd_type(cd, obj) == NFCD_TYPE_OBJECT);
-			nfcd_loc name = nfcd_object_lookup(cd, obj, "name");
-			assert_strequal(nfcd_to_string(cd, name), "Niklas");
-			assert(nfcd_object_size(cd, obj) == 2);
-			assert_strequal(nfcd_object_key(cd, obj,1), "age");
-		}
-
-		{
-			char *s = "name : \"Niklas\" age : 41";
-			struct nfjp_Settings settings = {0};
-			settings.unquoted_names = 1;
-			settings.implicit_root_object = 1;
-			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
-			assert_strequal(err, "1: Expected `,`, saw `a`");
-		}
-
-		{
-			char *s = ",,name = \"Niklas\" age = 41, , ,,";
-			struct nfjp_Settings settings = {0};
-			settings.unquoted_names = 1;
-			settings.implicit_root_object = 1;
-			settings.optional_commas = 1;
-			settings.equals_for_colon = 1;
-			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
-			assert(err == 0);
-			nfcd_loc obj = nfcd_root(cd);
-			assert(nfcd_type(cd, obj) == NFCD_TYPE_OBJECT);
-			nfcd_loc name = nfcd_object_lookup(cd, obj, "name");
-			assert_strequal(nfcd_to_string(cd, name), "Niklas");
-			assert(nfcd_object_size(cd, obj) == 2);
-			assert_strequal(nfcd_object_key(cd, obj,1), "age");
-		}
-
-		{
-			char *s = ",,name = \"Niklas\" age = 41, , ,,";
-			struct nfjp_Settings settings = {0};
-			settings.unquoted_names = 1;
-			settings.implicit_root_object = 1;
-			settings.optional_commas = 1;
-			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
-			assert_strequal(err, "1: Expected `:`, saw `=`");
-		}
-
-		{
-			char *s = "\"\"\" Bla \" Bla \"\"\"";
-			struct nfjp_Settings settings = {0};
-			settings.python_multiline_strings = 1;
-			const char *err = nfjp_parse_with_settings(s, &cd, &settings);
-			assert(err == 0);
-			assert(nfcd_type(cd, nfcd_root(cd)) == NFCD_TYPE_STRING);
-			assert_strequal(nfcd_to_string(cd, nfcd_root(cd)), " Bla \" Bla ");
-		}
+		test_error(&s, &cd, "\"\n\"", "1: Literal control character in string");
+		test(&s, &cd, "\"\\\"\\\\\\/\\b\\f\\n\\r\\t\"", "s", "\"\\/\b\f\n\r\t");
+		test(&s, &cd, "\"\\u00e4\\u6176\"", "s", "ä慶");
+		test(&s, &cd, "[]", "[]");
+		test(&s, &cd, "[1,2, 3 ,4 , 5 ]", "[ddddd]", 1.0, 2.0, 3.0, 4.0, 5.0);
+		test_error(&s, &cd, "[1 2 3]", "1: Expected `,`, saw `2`");
+		test(&s, &cd, "{}", "{}");
+		test(&s, &cd, "{\"name\" : \"Niklas\", \"age\" : 41}", "{kskd}", "name", "Niklas", "age", 41.0);
+		test_error(&s, &cd, "{1 2 3}", "1: Expected `\"`, saw `1`");
+		test_error(&s, &cd, "{a: 10, b: 20}", "1: Expected `\"`, saw `a`");
+		s.unquoted_names = 1;
+		test(&s, &cd, "{a: 10, b: 20}", "{kdkd}", "a", 10.0, "b", 20.0);
+		test_error(&s, &cd, "// Comment\n{a: 10, b: 20}", "1: Unexpected character `/`");
+		s.c_comments = 1;
+		test(&s, &cd, "// Comment\n{a: 10, b: 20}", "{kdkd}", "a", 10.0, "b", 20.0);
+		test_error(&s, &cd, "// Bla\n/* Comment * /** // \n */\nz", "4: Unexpected character `z`");
+		test_error(&s, &cd, "a:10, b:20", "1: Unexpected character `a`");
+		s.implicit_root_object = 1;
+		test(&s, &cd, "a:10, b:20", "{kdkd}", "a", 10.0, "b", 20.0);
+		test_error(&s, &cd, "a:10 b:20", "1: Expected `,`, saw `b`");
+		s.optional_commas = 1;
+		test(&s, &cd, "a:10 b:20", "{kdkd}", "a", 10.0, "b", 20.0);
+		test(&s, &cd, ",,a:10 b:20, , ,,", "{kdkd}", "a", 10.0, "b", 20.0);
+		test_error(&s, &cd, "a=10 b=20", "1: Expected `:`, saw `=`");
+		s.equals_for_colon = 1;
+		test(&s, &cd, "a=10 b=20", "{kdkd}", "a", 10.0, "b", 20.0);
+		s.implicit_root_object = 0;
+		test_error(&s, &cd, "\"\"\" Bla \" Bla \"\"\"", "1: Unexpected character `\"`");
+		s.python_multiline_strings = 1;
+		test(&s, &cd, "\"\"\" Bla \" Bla \"\"\"", "s", " Bla \" Bla ");
+		test(&s, &cd, "\"\"\"\"\" x \"\"\"\"\"", "s", "\"\" x \"\"");
 	}
 
 #endif

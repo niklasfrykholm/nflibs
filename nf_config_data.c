@@ -22,6 +22,7 @@ int nfcd_array_size(struct nfcd_ConfigData *cd, nfcd_loc arr);
 nfcd_loc nfcd_array_item(struct nfcd_ConfigData *cd, nfcd_loc arr, int i);
 
 int nfcd_object_size(struct nfcd_ConfigData *cd, nfcd_loc object);
+nfcd_loc nfcd_object_keyloc(struct nfcd_ConfigData *cd, nfcd_loc object, int i);
 const char *nfcd_object_key(struct nfcd_ConfigData *cd, nfcd_loc object, int i);
 nfcd_loc nfcd_object_value(struct nfcd_ConfigData *cd, nfcd_loc object, int i);
 nfcd_loc nfcd_object_lookup(struct nfcd_ConfigData *cd, nfcd_loc object, const char *key);
@@ -204,6 +205,14 @@ static struct nfcd_ObjectItem *object_item(struct nfcd_ConfigData *cd, nfcd_loc 
 	return items + i;
 }
 
+nfcd_loc nfcd_object_keyloc(struct nfcd_ConfigData *cd, nfcd_loc object, int i)
+{
+	struct nfcd_ObjectItem *item = object_item(cd, object, i);
+	if (!item)
+		return nfcd_null();
+	return item->key;
+}
+
 const char *nfcd_object_key(struct nfcd_ConfigData *cd, nfcd_loc object, int i)
 {
 	struct nfcd_ObjectItem *item = object_item(cd, object, i);
@@ -223,7 +232,7 @@ nfcd_loc nfcd_object_value(struct nfcd_ConfigData *cd, nfcd_loc object, int i)
 nfcd_loc nfcd_object_lookup(struct nfcd_ConfigData *cd, nfcd_loc object, const char *key)
 {
 	nfcd_loc key_loc = MAKE_LOC(NFCD_TYPE_STRING, nfst_to_symbol_const(cd->string_table, key));
-	
+
 	struct nfcd_Block *block = (struct nfcd_Block *)((char *)cd + LOC_OFFSET(object));
 	while (1) {
 		struct nfcd_ObjectItem *items = (struct nfcd_ObjectItem *)(block + 1);
@@ -233,7 +242,7 @@ nfcd_loc nfcd_object_lookup(struct nfcd_ConfigData *cd, nfcd_loc object, const c
 		}
 		if (block->next_block == 0)
 			break;
-		block = (struct nfcd_Block *)((char *)cd + LOC_OFFSET(block->next_block));		
+		block = (struct nfcd_Block *)((char *)cd + LOC_OFFSET(block->next_block));
 	}
 
 	return nfcd_null();
@@ -383,7 +392,7 @@ nfcd_realloc nfcd_allocator(struct nfcd_ConfigData *cd, void **user_data)
 		assert(nfcd_type(cd, nfcd_array_item(cd, arr, 1)) == NFCD_TYPE_NUMBER);
 		assert(nfcd_to_number(cd, nfcd_array_item(cd, arr,1)) == 2);
 		assert(nfcd_type(cd, nfcd_array_item(cd, arr, 10)) == NFCD_TYPE_NULL);
-		
+
 		nfcd_loc obj = nfcd_add_object(&cd, 16);
 		nfcd_set(&cd, obj, "name", nfcd_add_string(&cd, "Niklas"));
 		nfcd_set(&cd, obj, "age", nfcd_add_number(&cd, 41));
