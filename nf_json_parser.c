@@ -446,7 +446,7 @@ static void skip_char(struct Parser *p, char c)
 
 static void error(struct Parser *p, const char *format, ...)
 {
-	const int ERROR_BUFFER_SIZE = 80;
+	#define ERROR_BUFFER_SIZE 80
 
 	// Not thread-safe. hmm...
 	static char error[ERROR_BUFFER_SIZE];
@@ -459,6 +459,8 @@ static void error(struct Parser *p, const char *format, ...)
 	va_end(ap);
 
 	longjmp(p->env, -1);
+
+	#undef ERROR_BUFFER_SIZE
 }
 
 static void cb_grow(struct Parser *p, struct CharBuffer *cb)
@@ -606,7 +608,7 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 
 	static void fail(const char *s, const char *format, ...)
 	{
-		const int ERROR_BUFFER_SIZE = 200;
+		#define ERROR_BUFFER_SIZE 200
 		char error[ERROR_BUFFER_SIZE];
 
 		va_list ap;
@@ -616,6 +618,7 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 
 		fprintf(stderr, "%s\n\n%s\n", s, error);
 		exit(1);
+		#undef ERROR_BUFFER_SIZE
 	}
 
 	static void test_error(struct nfjp_Settings *settings, struct nfcd_ConfigData **cd, const char *s, const char *expected_err)
@@ -629,12 +632,13 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 
 	void test(struct nfjp_Settings *settings, struct nfcd_ConfigData **cd, const char *json, const char *format, ...)
 	{
+		#define STACK_MAX 16
+
 		const char *err = nfjp_parse_with_settings(json, cd, settings);
 		if (err)
 			fail(json, "%s", err);
 		nfcd_loc root = nfcd_root(*cd);
 
-		const int STACK_MAX = 16;
 		nfcd_loc stack[STACK_MAX];
 		int stack_top = 0;
 		stack[stack_top++] = root;
@@ -713,6 +717,8 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 
 		if (stack_top != 0)
 			fail(json, "Unconsumed items");
+
+		#undef STACK_MAX
 	}
 
 	int main(int argc, char **argv)

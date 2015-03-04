@@ -17,6 +17,7 @@ struct nfmt_Buffer nfmt_read();
 // # Implementation
 
 #include <memory.h>
+#include <stdlib.h>
 
 struct nfst_StringTable
 {

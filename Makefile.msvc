@@ -1,0 +1,36 @@
+# Run with
+#
+# 	nmake /nologo /f Makefile.msvc TARGET
+
+default: run_tests
+
+CC = cl /Zi /nologo /Dinline=/**/
+
+.PHONY: run_tests
+run_tests: build_tests
+	unit_tests\string_table.exe
+	unit_tests\memory_tracker.exe
+	unit_tests\config_data.exe
+	unit_tests\json_parser.exe
+
+.PHONY: build_tests
+build_tests: unit_tests unit_tests/string_table.exe unit_tests/memory_tracker.exe unit_tests/config_data.exe unit_tests/json_parser.exe
+
+unit_tests:
+	mkdir unit_tests
+
+unit_tests/string_table.exe: nf_string_table.c
+	$(CC) /DNFST_UNIT_TEST $** /Fe$@
+
+unit_tests/memory_tracker.exe: nf_string_table.c nf_memory_tracker.c
+	$(CC) /DNFMT_UNIT_TEST $** /Fe$@
+
+unit_tests/config_data.exe: nf_config_data.c nf_string_table.c
+	$(CC) /DNFCD_UNIT_TEST $** /Fe$@
+
+unit_tests/json_parser.exe: nf_json_parser.c nf_config_data.c nf_string_table.c
+	$(CC) /DNFJP_UNIT_TEST $** /Fe$@
+
+.PHONY: clean
+clean:
+	rm -rf unit_tests

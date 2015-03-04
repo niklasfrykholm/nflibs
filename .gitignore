@@ -1,1 +1,4 @@
+*.obj
+
 /unit_tests
+/vc120.pdb
