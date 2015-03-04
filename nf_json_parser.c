@@ -586,7 +586,6 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 		NFCD_TYPE_ARRAY, NFCD_TYPE_OBJECT
 	};
 
-	typedef void * (*nfcd_realloc) (void *ud, void *ptr, int osize, int nsize, const char *file, int line);
 	struct nfcd_ConfigData *nfcd_make(nfcd_realloc realloc, void *ud, int config_size, int stringtable_size);
 	nfcd_loc nfcd_root(struct nfcd_ConfigData *cd);
 	int nfcd_type(struct nfcd_ConfigData *cd, nfcd_loc loc);
