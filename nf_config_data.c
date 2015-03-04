@@ -1,3 +1,5 @@
+// ## Interface
+
 struct nfcd_ConfigData;
 
 enum {
@@ -42,7 +44,7 @@ void nfcd_set_loc(struct nfcd_ConfigData **cd, nfcd_loc object, nfcd_loc key, nf
 
 nfcd_realloc nfcd_allocator(struct nfcd_ConfigData *cd, void **user_data);
 
-// IMPLEMENTATION
+// ## Implementation
 
 #include <memory.h>
 #include <stdlib.h>

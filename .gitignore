@@ -1,4 +1,4 @@
-*.obj
-
 /unit_tests
+/*.obj
 /vc120.pdb
+/nflibs.h

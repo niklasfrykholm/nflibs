@@ -27,3 +27,9 @@ unit_tests/json_parser.exe: nf_json_parser.c nf_config_data.c nf_string_table.c
 .PHONY: clean
 clean:
 	rm -rf unit_tests
+	rm -f *.obj
+	rm -f vc120.pdb
+	rm -f nflibs.h
+
+header:
+	ruby tools/make_header.rb .

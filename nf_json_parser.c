@@ -1,4 +1,21 @@
+// # Json Parser
+//
+// This file implements a parser for parsing JSON and JSON-like documents.
+// You pass the document as a `const char *` and the result is used to fill in a
+// `nfcd_ConfigData` object.
+//
+// By specifying options in a `nfjp_Settings` object you can use this library
+// to parse more human friendly variants of JSON, such as SJSON:
+//
+// ```sjson
+// name = "Niklas"
+// age =41
+
+// ## External
+
 struct nfcd_ConfigData;
+
+// ## Interface
 
 struct nfjp_Settings
 {
@@ -9,7 +26,6 @@ struct nfjp_Settings
 	int equals_for_colon;
 	int python_multiline_strings;
 };
-
 const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp);
 const char *nfjp_parse_with_settings(const char *s, struct nfcd_ConfigData **cdp, struct nfjp_Settings *settings);
 
@@ -94,12 +110,52 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize);
 static unsigned parse_codepoint(struct Parser *p);
 static void cb_push_utf8_codepoint(struct Parser *p, struct CharBuffer *cb, unsigned codepoint);
 
+// Parses the JSON string `s`, storing the JSON data in `cdp`. If there is
+// a parse error, an error message will be returned, otherwise `NULL` is
+// returned.
+//
+// Note that if there is not enough memory in `cdp` to store all the JSON
+// data, the `nfcd_ConfigData` struct will be reallocated.
 const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp)
 {
 	struct nfjp_Settings settings = {0};
 	return nfjp_parse_with_settings(s, cdp, &settings);
 }
 
+// As `nfjp_parse()` but uses the `settings` object to allow different variants
+// of JSON. The following settings can be used:
+//
+// * **unquoted_names**. Allows barewords to be used for object keys.
+//
+//   ```
+//   {a: 10, b: 20}
+//   ```
+//
+//   Only the characters a-z, A_Z, 0-9, _ and - can be used in barewords.
+//
+// * **c_comments**. Allows C (`/* */`) and C++ (`//`) style comments in JSON files.
+//
+// * **implicit_root_object**. Makes it optional to surround the root object with
+//   `{ .. }`
+//
+//   ```
+//   a: 10, b: 20
+//   ```
+//
+// * **optional_commas**. Makes use of commas in objects and arrays optional:
+//
+//   ```
+//   a: 10 b: 20
+//   ```
+// * **equals_for_colon**. Allows the equals sign (`=`) to be used instead of the
+//   colon when specifying objects.
+//
+//   a=10 b=20
+//
+// * **python_multiline_strings**. Allows use of triple-quoted multiline strings.
+//   Triple-quoted strings are treated as "raw". Escape strings are not supported
+//   and not necessary. The only data that cannot be contained in a multiline string
+//   is the string end marker `"""`.
 const char *nfjp_parse_with_settings(const char *s, struct nfcd_ConfigData **cdp, struct nfjp_Settings *settings)
 {
 	struct Parser p = {s, 1, cdp, settings, 0};

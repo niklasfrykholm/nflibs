@@ -14,7 +14,7 @@ void nfmt_record_malloc(void *p, int size, const char *tag, const char *file, in
 void nfmt_record_free(void *p);
 struct nfmt_Buffer nfmt_read();
 
-// # Implementation
+// ## Implementation
 
 #include <memory.h>
 #include <stdlib.h>

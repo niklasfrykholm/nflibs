@@ -24,7 +24,7 @@
 
 #include <stdint.h>
 
-// ## Public interface
+// ## Interface
 
 #define NFST_STRING_TABLE_FULL (-1)
 
