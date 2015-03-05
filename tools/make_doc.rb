@@ -1,7 +1,5 @@
 require 'fileutils'
-
-Section = Struct.new(:markdown, :text)
-Function = Struct.new(:definition, :doc)
+require 'ostruct'
 
 class String
 	def indent
@@ -10,59 +8,85 @@ class String
 	end
 end
 
-dir = ARGV[0] || '.'
-Dir.chdir(dir) do
-	FileUtils.mkdir_p('doc')
-	Dir["*.c"].each do |cfile|
-		mdfile = File.join('doc', cfile)
-		mdfile['.c'] = '.md'
-		section = Section.new(true, '')
-		out = ''
-		add_section = lambda do |s|
-			s.text.strip!
-			out << "\n" if out != ''
-			if s.markdown
-				out << s.text << "\n"
+class DocGenerator
+	def generate(s)
+		groups = group(s.lines.collect {|line| tag(line)})
+		out = ""
+		groups.each_with_index do |group, i|
+			next_group = groups[i+1]
+			if group.type == :comment
+				out << group.texts.join('') << "\n"
+			elsif group.type == :code
+				out << "```cpp\n" << group.lines.join('') << "```\n\n"
+			end
+		end
+		out
+	end
+
+private
+	def tag(line)
+		@section = $1 if line[/^\/\/ ## (.*)/]
+		OpenStruct.new(
+			:line => line,
+			:type => line.strip=='' ? :blank :
+				line[/^\/\/ ?/] ? :comment : :code,
+			:section => @section,
+			:text => line.gsub(/^\/\/ ?/, ''),
+		)
+	end
+
+	def join_code(lines)
+		blank = nil
+		out = []
+		lines.each do |line|
+			if line.type == :blank
+				blank = line
+			elsif line.type == :code
+				if blank && out.size>0 && out[-1].type == :code
+					blank.type = :code
+					out << blank
+					blank = nil
+				end
+				out << line
+			elsif line.type == :comment
+				out << blank if blank
+				blank = nil
+				out << line
+			end
+		end
+		out
+	end
+
+	def group(lines)
+		lines = join_code(lines)
+		groups = []
+		lines.each_with_index do |l|
+			g = groups.size > 0 ? groups[-1] : nil
+			if g && g.type == l.type && g.section == l.section
+				g[:lines] << l.line
+				g[:texts] << l.text
 			else
-				out << "```cpp\n" << s.text << "```\n"
+				groups << OpenStruct.new(
+					:lines => [l.line],
+					:type => l.type,
+					:section => l.section,
+					:texts => [l.text], 
+				)
 			end
 		end
-		lastblank = true
-		in_implementation = false
-		functions = []
-		IO.foreach(cfile) do |line|
-			ismd = line[/^\/\//] || (line.strip == '' && section.markdown)
+		groups
+	end
+end
 
-			if section.markdown && !ismd && line.strip != "" && !lastblank
-				functions << Function.new(line.strip, section.text.strip)
-			end
-
-			if ismd != section.markdown
-				add_section.call(section) unless in_implementation
-				section = Section.new(ismd, '')
-			end
-
-			if line[/^\/\/ ## Implementation/]
-				in_implementation = true
-			end
-
-			line[/^\/\/ ?/] = '' if line[/^\/\/ ?/]
-			section.text << line
-			lastblank = line.strip == ''
-		end
-		add_section.call(section) unless in_implementation
-
-		out << "\n"
-		out << "## Public Functions\n"
-		out << "\n"
-		functions.each do |f|
-			out << "\#\#\# #{f.definition.gsub('*', '\\*')}\n"
-			out << "\n"
-			out << f.doc << "\n\n"
-		end
-
-		File.open(mdfile, "w") do |f|
-			f.write(out)
+def create_docs(dir)
+	Dir.chdir(dir) do
+		FileUtils.mkdir_p('doc')
+		Dir["*.c"].each do |cfile|
+			doc = DocGenerator.new.generate(IO.read(cfile))
+			mdfile = File.join('doc', cfile).gsub('.c', '.md')
+			File.open(mdfile, "w") { |f| f.write(doc) }
 		end
 	end
 end
+
+create_docs(ARGV[0] || '..')
