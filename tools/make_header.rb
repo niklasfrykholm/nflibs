@@ -1,6 +1,4 @@
-require 'fileutils'
-
-dir = ARGV[0]
+dir = ARGV[0] || '.'
 Dir.chdir(dir) do
 	out = ""
 	Dir["*.c"].each do |cfile|

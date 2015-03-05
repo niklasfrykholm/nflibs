@@ -31,5 +31,10 @@ clean:
 	rm -f vc120.pdb
 	rm -f nflibs.h
 
+.PHONY: header
 header:
 	ruby tools/make_header.rb .
+
+.PHONY: doc
+doc:
+	ruby tools/make_doc.rb .
