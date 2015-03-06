@@ -687,6 +687,7 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 	};
 
 	struct nfcd_ConfigData *nfcd_make(nfcd_realloc realloc, void *ud, int config_size, int stringtable_size);
+	void nfcd_free(struct nfcd_ConfigData *);
 	nfcd_loc nfcd_root(struct nfcd_ConfigData *cd);
 	int nfcd_type(struct nfcd_ConfigData *cd, nfcd_loc loc);
 	double nfcd_to_number(struct nfcd_ConfigData *cd, nfcd_loc loc);
@@ -699,9 +700,37 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 	nfcd_loc nfcd_object_value(struct nfcd_ConfigData *cd, nfcd_loc object, int i);
 	nfcd_loc nfcd_object_lookup(struct nfcd_ConfigData *cd, nfcd_loc object, const char *key);
 
+	struct memory_record
+	{
+		void *ptr;
+		int size;
+	};
+	#define MAX_MEMORY_RECORDS 128
+	static struct memory_record memlog[MAX_MEMORY_RECORDS];
+	static int memlog_size = 0;
+	
 	static void *realloc_f(void *ud, void *ptr, int osize, int nsize, const char *file, int line)
 	{
-		return realloc(ptr, nsize);
+		void *nptr = realloc(ptr, nsize);
+
+		if (ptr) {
+			int index = -1;
+			for (int i=0; i<memlog_size; ++i) {
+				if (ptr == memlog[i].ptr)
+					index = i;
+			}
+			assert(index >= 0);
+			if (nsize > 0)
+				memlog[index].size = nsize;
+			else
+				memlog[index] = memlog[--memlog_size];
+		} else {
+			assert(memlog_size < MAX_MEMORY_RECORDS);
+			struct memory_record r = {.ptr = nptr, .size = nsize};
+			memlog[memlog_size++] = r;
+		}
+
+		return nptr;
 	}
 
 	static void fail(const char *s, const char *format, ...)
@@ -887,6 +916,9 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 		s.python_multiline_strings = 1;
 		test(&s, &cd, "\"\"\" Bla \" Bla \"\"\"", "s", " Bla \" Bla ");
 		test(&s, &cd, "\"\"\"\"\" x \"\"\"\"\"", "s", "\"\" x \"\"");
+
+		nfcd_free(cd);
+		assert(memlog_size == 0);
 	}
 
 #endif

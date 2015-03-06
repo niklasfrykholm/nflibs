@@ -20,6 +20,7 @@ typedef int nfcd_loc;
 typedef void * (*nfcd_realloc) (void *ud, void *ptr, int osize, int nsize, const char *file, int line);
 
 struct nfcd_ConfigData *nfcd_make(nfcd_realloc realloc, void *ud, int config_size, int stringtable_size);
+void nfcd_free(struct nfcd_ConfigData *cd);
 
 nfcd_loc nfcd_root(struct nfcd_ConfigData *cd);
 int nfcd_type(struct nfcd_ConfigData *cd, nfcd_loc loc);
@@ -164,6 +165,17 @@ struct nfcd_ConfigData *nfcd_make(nfcd_realloc realloc, void *ud, int config_siz
 	nfst_init(st, stringtable_size, 15);
 
 	return cd;
+}
+
+// Frees an nfcd_ConfigData object created by nfcd_make.
+void nfcd_free(struct nfcd_ConfigData *cd)
+{
+	nfcd_realloc realloc = cd->realloc;
+	void *ud = cd->realloc_user_data;
+
+	int old_size = nfst_allocated_bytes(cd->string_table);
+	realloc(ud, cd->string_table, old_size, 0, __FILE__, __LINE__);
+	realloc(ud, cd, cd->allocated_bytes, 0, __FILE__, __LINE__);
 }
 
 // Returns the root item of the config data.
@@ -432,9 +444,37 @@ nfcd_realloc nfcd_allocator(struct nfcd_ConfigData *cd, void **user_data)
 	#include <stdlib.h>
 	#include <assert.h>
 
+	struct memory_record
+	{
+		void *ptr;
+		int size;
+	};
+	#define MAX_MEMORY_RECORDS 128
+	static struct memory_record memlog[MAX_MEMORY_RECORDS];
+	static int memlog_size = 0;
+	
 	static void *realloc_f(void *ud, void *ptr, int osize, int nsize, const char *file, int line)
 	{
-		return realloc(ptr, nsize);
+		void *nptr = realloc(ptr, nsize);
+
+		if (ptr) {
+			int index = -1;
+			for (int i=0; i<memlog_size; ++i) {
+				if (ptr == memlog[i].ptr)
+					index = i;
+			}
+			assert(index >= 0);
+			if (nsize > 0)
+				memlog[index].size = nsize;
+			else
+				memlog[index] = memlog[--memlog_size];
+		} else {
+			assert(memlog_size < MAX_MEMORY_RECORDS);
+			struct memory_record r = {.ptr = nptr, .size = nsize};
+			memlog[memlog_size++] = r;
+		}
+
+		return nptr;
 	}
 
 	int main(int argc, char **argv)
@@ -478,6 +518,9 @@ nfcd_realloc nfcd_allocator(struct nfcd_ConfigData *cd, void **user_data)
 		assert(nfcd_type(cd, nfcd_object_lookup(cd, obj, "age")) == NFCD_TYPE_NUMBER);
 		assert(nfcd_to_number(cd, nfcd_object_lookup(cd, obj, "age")) == 41);
 		assert(nfcd_type(cd, nfcd_object_lookup(cd, obj, "title")) == NFCD_TYPE_NULL);
+
+		nfcd_free(cd);
+		assert(memlog_size == 0);
 	}
 
 #endif
