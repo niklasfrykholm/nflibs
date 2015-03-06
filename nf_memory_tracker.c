@@ -74,6 +74,7 @@ static inline void write(const void * data, int size);
 static char string_table_buffer[STRING_TABLE_SIZE];
 static struct Stream stream;
 static struct nfst_StringTable *strings;
+static int sent_symbols = -1;
 
 // Initializes the memory tracker. You should call this before calling any other
 // memory tracking functions.
@@ -106,7 +107,7 @@ void nfmt_record_free(void *p)
 // the streams from overflowing.
 struct nfmt_Buffer nfmt_read()
 {
-	struct nfmt_Buffer b;
+	struct nfmt_Buffer b
 	b.start = stream.buffer + stream.start;
 	int count = MIN(stream.start + stream.size, STREAM_SIZE) - stream.start;
 	b.end = b.start + count;
@@ -117,12 +118,13 @@ struct nfmt_Buffer nfmt_read()
 
 static inline int to_symbol(const char *s)
 {
-	int before_count = strings->count;
 	int sym = nfst_to_symbol(strings, s);
 	
 	// New symbol, add it to the stream.
-	if (strings->count > before_count)
+	if (sym > sent_symbols) {
 		record(RECORD_TYPE_SYMBOL, &sym, sizeof(sym), s, strlen(s)+1);
+		sent_symbols = sym;
+	}
 
 	return sym;
 }
