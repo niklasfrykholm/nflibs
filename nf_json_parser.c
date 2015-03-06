@@ -5,11 +5,13 @@
 // `nfcd_ConfigData` object.
 //
 // By specifying options in a `nfjp_Settings` object you can use this library
-// to parse more human friendly variants of JSON, such as SJSON:
+// to parse more human friendly variants of JSON, such as
+// [SJSON](http://bitsquid.blogspot.com/2009/10/simplified-json-notation.html):
 //
 // ```sjson
 // name = "Niklas"
-// age =41
+// age = 41
+// ```
 
 // ## External
 
@@ -19,7 +21,7 @@ struct nfcd_ConfigData;
 
 struct nfjp_Settings
 {
-	int unquoted_names;
+	int unquoted_keys;
 	int c_comments;
 	int implicit_root_object;
 	int optional_commas;
@@ -38,6 +40,8 @@ const char *nfjp_parse_with_settings(const char *s, struct nfcd_ConfigData **cdp
 #include <math.h>
 #include <memory.h>
 
+// ### nf_config_data interface
+
 typedef int nfcd_loc;
 typedef void * (*nfcd_realloc) (void *ud, void *ptr, int osize, int nsize, const char *file, int line);
 nfcd_loc nfcd_null();
@@ -53,6 +57,12 @@ void nfcd_set(struct nfcd_ConfigData **cd, nfcd_loc object, const char *key, nfc
 void nfcd_set_loc(struct nfcd_ConfigData **cdp, nfcd_loc object, nfcd_loc key, nfcd_loc value);
 nfcd_realloc nfcd_allocator(struct nfcd_ConfigData *cd, void **user_data);
 
+// ### Local declarations
+
+// Size of buffer for parser errors.
+#define PARSER_ERROR_BUFFER_SIZE 80
+
+// Stores the current state of the parser.
 struct Parser
 {
 	const char *s;
@@ -60,6 +70,7 @@ struct Parser
 	struct nfcd_ConfigData **cdp;
 	struct nfjp_Settings *settings;
 	char *error;
+	char error_buffer[PARSER_ERROR_BUFFER_SIZE];
 	jmp_buf env;
 };
 
@@ -69,7 +80,7 @@ static nfcd_loc parse_members(struct Parser *p);
 static nfcd_loc parse_key(struct Parser *p);
 static nfcd_loc parse_array(struct Parser *p);
 static nfcd_loc parse_elements(struct Parser *p);
-static nfcd_loc parse_name(struct Parser *p);
+static nfcd_loc parse_key(struct Parser *p);
 static nfcd_loc parse_string(struct Parser *p);
 static nfcd_loc parse_number(struct Parser *p);
 static nfcd_loc parse_true(struct Parser *p);
@@ -81,7 +92,11 @@ static void skip_char(struct Parser *p, char c);
 
 static void error(struct Parser *p, const char *s, ...);
 
+// Stack storage space for char buffer.
 #define CHAR_BUFFER_STATIC_SIZE 128
+
+// C99 version of Vector<char>. The struct includes a stack storage area in
+// `buffer`. Memory will only be allocated when local storage is exhausted.
 struct CharBuffer
 {
 	int allocated;
@@ -89,11 +104,15 @@ struct CharBuffer
 	char *s;
 	char buffer[CHAR_BUFFER_STATIC_SIZE];
 };
+
 static void cb_grow(struct Parser *p, struct CharBuffer *cb);
 static void cb_free(struct Parser *p, struct CharBuffer *cb);
 static inline void cb_push(struct Parser *p, struct CharBuffer *cb, char c);
 
+// Stack storage space for nfcd_loc buffer.
 #define LOC_BUFFER_STATIC_SIZE 128
+
+// C99 version of Vector<nfcd_loc> with stack storage area.
 struct LocBuffer
 {
 	int allocated;
@@ -115,7 +134,8 @@ static void cb_push_utf8_codepoint(struct Parser *p, struct CharBuffer *cb, unsi
 // returned.
 //
 // Note that if there is not enough memory in `cdp` to store all the JSON
-// data, the `nfcd_ConfigData` struct will be reallocated.
+// data, the `nfcd_ConfigData` struct will be reallocated and the value of
+// `*cdp` will change.
 const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp)
 {
 	struct nfjp_Settings settings = {0};
@@ -125,13 +145,13 @@ const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp)
 // As `nfjp_parse()` but uses the `settings` object to allow different variants
 // of JSON. The following settings can be used:
 //
-// * **unquoted_names**. Allows barewords to be used for object keys.
+// * **unquoted_keys**. Allows barewords to be used for object keys.
 //
 //   ```
 //   {a: 10, b: 20}
 //   ```
 //
-//   Only the characters a-z, A_Z, 0-9, _ and - can be used in barewords.
+//   Only the characters a-z, A-Z, 0-9, _ and - can be used in barewords.
 //
 // * **c_comments**. Allows C (`/* */`) and C++ (`//`) style comments in JSON files.
 //
@@ -178,7 +198,8 @@ const char *nfjp_parse_with_settings(const char *s, struct nfcd_ConfigData **cdp
 	return 0;
 }
 
-nfcd_loc parse_value(struct Parser *p)
+// Parses and returns the value at `p->s`.
+static nfcd_loc parse_value(struct Parser *p)
 {
 	if (*p->s == '"')
 		return parse_string(p);
@@ -200,7 +221,8 @@ nfcd_loc parse_value(struct Parser *p)
 	return nfcd_null();
 }
 
-nfcd_loc parse_string(struct Parser *p)
+// Parses and returns a string at `p->s`.
+static nfcd_loc parse_string(struct Parser *p)
 {
 	struct CharBuffer cb = {0};
 	skip_char(p, '"');
@@ -253,6 +275,7 @@ nfcd_loc parse_string(struct Parser *p)
 	return loc;
 }
 
+// Parses and returns a number at `p->s`.
 static nfcd_loc parse_number(struct Parser *p)
 {
 	int sign = 1;
@@ -317,7 +340,8 @@ static nfcd_loc parse_number(struct Parser *p)
 	return nfcd_add_number(p->cdp, v);
 }
 
-nfcd_loc parse_object(struct Parser *p)
+// Parses and returns an object at `p->s`.
+static nfcd_loc parse_object(struct Parser *p)
 {
 	skip_char(p, '{');
 	skip_whitespace(p);
@@ -330,16 +354,18 @@ nfcd_loc parse_object(struct Parser *p)
 	return obj;
 }
 
-#define isbarename(c) \
+// True if `c` is a character that can be used in a bareword key.
+#define isbareword(c) \
 	( ((c) >= 'a' && (c) <= 'z') || ((c) >= 'A' && (c) <= 'Z') || \
 	  ((c) >= '0' && (c) <= '9') || c == '_' || c == '-' )
 
-nfcd_loc parse_name(struct Parser *p)
+// Parses and returns an object key at `p->s`.
+static nfcd_loc parse_key(struct Parser *p)
 {
 	skip_whitespace(p);
-	if (p->settings->unquoted_names && isbarename(*p->s)) {
+	if (p->settings->unquoted_keys && isbareword(*p->s)) {
 		struct CharBuffer cb = {0};
-		while (isbarename(*p->s)) {
+		while (isbareword(*p->s)) {
 			cb_push(p, &cb, *p->s);
 			++p->s;
 		}
@@ -352,16 +378,17 @@ nfcd_loc parse_name(struct Parser *p)
 	return parse_string(p);
 }
 
-#undef isbarename
+#undef isbareword
 
-nfcd_loc parse_members(struct Parser *p)
+// Parses object members at `p->s` and returns an object with them.
+static nfcd_loc parse_members(struct Parser *p)
 {
-	struct LocBuffer names = {0};
+	struct LocBuffer keys = {0};
 	struct LocBuffer values = {0};
 
 	while (1) {
-		nfcd_loc name = parse_name(p);
-		lb_push(p, &names, name);
+		nfcd_loc key = parse_key(p);
+		lb_push(p, &keys, key);
 		skip_whitespace(p);
 		if (p->settings->equals_for_colon && *p->s == '=')
 			skip_char(p, '=');
@@ -378,17 +405,18 @@ nfcd_loc parse_members(struct Parser *p)
 		skip_whitespace(p);
 	}
 
-	nfcd_loc obj = nfcd_add_object(p->cdp, names.n);
-	for (int i=0; i<names.n; ++i)
-		nfcd_set_loc(p->cdp, obj, names.data[i], values.data[i]);
+	nfcd_loc obj = nfcd_add_object(p->cdp, keys.n);
+	for (int i=0; i<keys.n; ++i)
+		nfcd_set_loc(p->cdp, obj, keys.data[i], values.data[i]);
 
-	lb_free(p, &names);
+	lb_free(p, &keys);
 	lb_free(p, &values);
 
 	return obj;
 }
 
-nfcd_loc parse_array(struct Parser *p)
+// Parses an array at `p->s` and returns it.
+static nfcd_loc parse_array(struct Parser *p)
 {
 	skip_char(p, '[');
 	skip_whitespace(p);
@@ -402,7 +430,8 @@ nfcd_loc parse_array(struct Parser *p)
 	return arr;
 }
 
-nfcd_loc parse_elements(struct Parser *p)
+// Parses array elements at `p->s` and returns an array with them.
+static nfcd_loc parse_elements(struct Parser *p)
 {
 	struct LocBuffer elements = {0};
 
@@ -426,7 +455,8 @@ nfcd_loc parse_elements(struct Parser *p)
 	return arr;
 }
 
-nfcd_loc parse_true(struct Parser *p)
+// Parses `true` and returns it.
+static nfcd_loc parse_true(struct Parser *p)
 {
 	skip_char(p, 't');
 	skip_char(p, 'r');
@@ -435,7 +465,8 @@ nfcd_loc parse_true(struct Parser *p)
 	return nfcd_true();
 }
 
-nfcd_loc parse_false(struct Parser *p)
+// Parses `false` and returns it.
+static nfcd_loc parse_false(struct Parser *p)
 {
 	skip_char(p, 'f');
 	skip_char(p, 'a');
@@ -445,7 +476,8 @@ nfcd_loc parse_false(struct Parser *p)
 	return nfcd_false();
 }
 
-nfcd_loc parse_null(struct Parser *p)
+// Parses `null` and returns it.
+static nfcd_loc parse_null(struct Parser *p)
 {
 	skip_char(p, 'n');
 	skip_char(p, 'u');
@@ -454,6 +486,7 @@ nfcd_loc parse_null(struct Parser *p)
 	return nfcd_null();
 }
 
+// Skips past any whitespace characters or comments at `p->s`.
 static void skip_whitespace(struct Parser *p)
 {
 	while (isspace(*p->s) || *p->s == '/' || *p->s == ',') {
@@ -489,6 +522,8 @@ static void skip_whitespace(struct Parser *p)
 	}
 }
 
+// Looks for the character `c` at `p->s`. If it is found there,
+// skips past it, otherwise generates an error.
 static void skip_char(struct Parser *p, char c)
 {
 	if (*p->s != c) {
@@ -500,25 +535,21 @@ static void skip_char(struct Parser *p, char c)
 	++p->s;
 }
 
+// Reports an error. `longjmp` is used to exit the parse function when
+// an error is encountered.
 static void error(struct Parser *p, const char *format, ...)
 {
-	#define ERROR_BUFFER_SIZE 80
-
-	// Not thread-safe. hmm...
-	static char error[ERROR_BUFFER_SIZE];
-
-	p->error = error;
+	p->error = p->error_buffer;
 	int n = sprintf(p->error, "%i: ", p->line_number);
 	va_list ap;
 	va_start(ap, format);
-	vsnprintf(p->error + n, ERROR_BUFFER_SIZE-n, format, ap);
+	vsnprintf(p->error + n, PARSER_ERROR_BUFFER_SIZE-n, format, ap);
 	va_end(ap);
 
 	longjmp(p->env, -1);
-
-	#undef ERROR_BUFFER_SIZE
 }
 
+// Grows the allocated memory used by `cb`.
 static void cb_grow(struct Parser *p, struct CharBuffer *cb)
 {
 	if (cb->allocated == 0) {
@@ -540,12 +571,14 @@ static void cb_grow(struct Parser *p, struct CharBuffer *cb)
 		memcpy(cb->s, cb->buffer, cb->n);
 }
 
+// Frees the memory used by `cb`.
 static void cb_free(struct Parser *p, struct CharBuffer *cb)
 {
 	if (cb->s != cb->buffer)
 		temp_realloc(p, cb->s, cb->allocated, 0);
 }
 
+// Adds `c` to the end of `cb`.
 static inline void cb_push(struct Parser *p, struct CharBuffer *cb, char c)
 {
 	if (cb->n >= cb->allocated)
@@ -553,6 +586,7 @@ static inline void cb_push(struct Parser *p, struct CharBuffer *cb, char c)
 	cb->s[cb->n++] = c;
 }
 
+// Increases the allocated size used by `lb`.
 static void lb_grow(struct Parser *p, struct LocBuffer *lb)
 {
 	if (lb->allocated == 0) {
@@ -574,12 +608,14 @@ static void lb_grow(struct Parser *p, struct LocBuffer *lb)
 		memcpy(lb->data, lb->buffer, lb->n);
 }
 
+// Frees the memory used by `lb`.
 static void lb_free(struct Parser *p, struct LocBuffer *lb)
 {
 	if (lb->data != lb->buffer)
 		temp_realloc(p, lb->data, sizeof(nfcd_loc)*lb->allocated, 0);
 }
 
+// Adds `loc` to `lb`.
 static inline void lb_push(struct Parser *p, struct LocBuffer *lb, nfcd_loc loc)
 {
 	if (lb->n >= lb->allocated)
@@ -587,6 +623,7 @@ static inline void lb_push(struct Parser *p, struct LocBuffer *lb, nfcd_loc loc)
 	lb->data[lb->n++] = loc;
 }
 
+// Parses a hex UTF-8 codepoint at `p->s`.
 static unsigned parse_codepoint(struct Parser *p)
 {
 	unsigned codepoint = 0;
@@ -606,6 +643,7 @@ static unsigned parse_codepoint(struct Parser *p)
 	return codepoint;
 }
 
+// Encodes a codepoint as UTF-8 and pushes it to `cb`.
 static void cb_push_utf8_codepoint(struct Parser *p, struct CharBuffer *cb, unsigned codepoint)
 {
 	if (codepoint <= 0x7fu)
@@ -626,12 +664,16 @@ static void cb_push_utf8_codepoint(struct Parser *p, struct CharBuffer *cb, unsi
 		error(p, "Not an UTF-8 codepoint `%u`", codepoint);
 }
 
+// Used for temporary memory allocations that only exist during the lifetime
+// of a function.
 static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 {
 	void *realloc_ud;
 	nfcd_realloc realloc_f = nfcd_allocator(*p->cdp, &realloc_ud);
 	return realloc_f(realloc_ud, optr, osize, nsize, __FILE__, __LINE__);
 }
+
+// ## Unit Test
 
 #ifdef NFJP_UNIT_TEST
 
@@ -824,7 +866,7 @@ static void *temp_realloc(struct Parser *p, void *optr, int osize, int nsize)
 		test(&s, &cd, "{\"name\" : \"Niklas\", \"age\" : 41}", "{kskd}", "name", "Niklas", "age", 41.0);
 		test_error(&s, &cd, "{1 2 3}", "1: Expected `\"`, saw `1`");
 		test_error(&s, &cd, "{a: 10, b: 20}", "1: Expected `\"`, saw `a`");
-		s.unquoted_names = 1;
+		s.unquoted_keys = 1;
 		test(&s, &cd, "{a: 10, b: 20}", "{kdkd}", "a", 10.0, "b", 20.0);
 		test_error(&s, &cd, "// Comment\n{a: 10, b: 20}", "1: Unexpected character `/`");
 		s.c_comments = 1;
