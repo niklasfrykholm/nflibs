@@ -1,1 +1,5 @@
 /unit_tests
+/doc
+/*.obj
+/vc120.pdb
+/nflibs.h

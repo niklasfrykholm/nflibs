@@ -1,12 +1,33 @@
-// ## Includes
-
-#include <stdint.h>
+// # Memory Tracker
+//
+// This files implements a memory tracker. Using the memory tracker you log
+// allocations and frees with calls to `nfmt_record_malloc()` and
+// `nfmt_record_free()`. The logged data can later be read out with a call
+// to `nfmt_read()` for transmission over the network, saving to disk, etc.
+//
+// You are responsible for reading out the data at regular intervals. If you
+// don't do that, the data buffer will overflow and recording is
+// suspended. If this happens, a special marker `RECORD_TYPE_OUT_OF_MEMORY` is
+// inserted in the output stream, so that consumers can tell what has happened.
+//
+// The format of the recorded buffer is a sequence of:
+//
+// ```
+// [ EVENT_TYPE ] [ EVENT_DATA ]
+// ```
+//
+// The event type is an integer and can be one of
+//
+// ```cpp
+// enum {RECORD_TYPE_MALLOC, RECORD_TYPE_FREE, RECORD_TYPE_SYMBOL, RECORD_TYPE_OUT_OF_MEMORY};
+// ```
+// See the code for a description of the data that is logged for each type of event.
 
 // ## Interface
 
 struct nfmt_Buffer {
-	uint8_t *start;
-	uint8_t *end;
+	char *start;
+	char *end;
 };
 
 void nfmt_init();
@@ -14,18 +35,12 @@ void nfmt_record_malloc(void *p, int size, const char *tag, const char *file, in
 void nfmt_record_free(void *p);
 struct nfmt_Buffer nfmt_read();
 
-// # Implementation
+// ## Implementation
 
 #include <memory.h>
+#include <stdlib.h>
 
-struct nfst_StringTable
-{
-    int allocated_bytes;
-    int count;
-    int uses_16_bit_hash_slots;
-    int num_hash_slots;
-    int string_bytes;
-};
+struct nfst_StringTable;
 void nfst_init(struct nfst_StringTable *st, int bytes, int average_string_size);
 int nfst_to_symbol(struct nfst_StringTable *st, const char *s);
 
@@ -38,7 +53,7 @@ enum {RECORD_TYPE_MALLOC, RECORD_TYPE_FREE, RECORD_TYPE_SYMBOL, RECORD_TYPE_OUT_
 
 struct Stream
 {
-	uint8_t buffer[STREAM_SIZE];
+	char buffer[STREAM_SIZE];
 	int start;
 	int size;
 };
@@ -59,6 +74,7 @@ static inline void write(const void * data, int size);
 static char string_table_buffer[STRING_TABLE_SIZE];
 static struct Stream stream;
 static struct nfst_StringTable *strings;
+static int sent_symbols = -1;
 
 // Initializes the memory tracker. You should call this before calling any other
 // memory tracking functions.
@@ -68,7 +84,8 @@ void nfmt_init()
 	nfst_init(strings, STRING_TABLE_SIZE, 15);
 }
 
-// Records data for a malloc operation
+// Records data for a malloc operation. The tag is an arbitrary logged string
+// to identify the system that made the allocation. 
 void nfmt_record_malloc(void *p, int size, const char *tag, const char *file, int line)
 {
 	struct MallocRecord mr;
@@ -101,12 +118,13 @@ struct nfmt_Buffer nfmt_read()
 
 static inline int to_symbol(const char *s)
 {
-	int before_count = strings->count;
 	int sym = nfst_to_symbol(strings, s);
 	
 	// New symbol, add it to the stream.
-	if (strings->count > before_count)
+	if (sym > sent_symbols) {
 		record(RECORD_TYPE_SYMBOL, &sym, sizeof(sym), s, strlen(s)+1);
+		sent_symbols = sym;
+	}
 
 	return sym;
 }

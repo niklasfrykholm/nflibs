@@ -10,21 +10,9 @@
 // allocating the buffer. If the buffer runs out of memory you are responsible
 // for resizing it before you can add more strings.
 //
-// See example code in the Unit Test section below.
-//
-// ## To Do
-//
-// * Four byte align strings for strcmp & hash performance?
-// * Store hashes for faster rehashing?
-// * Packing function that optimizes seed for minimal collisions
-// * Faster hahsing and strlen for long strings?
-//   - Is there any point? This will mostly be used for short strings anyway.
+// See example code in the **Unit Test** section below.
 
-// # Includes
-
-#include <stdint.h>
-
-// ## Public interface
+// ## Interface
 
 #define NFST_STRING_TABLE_FULL (-1)
 
@@ -42,6 +30,7 @@ const char *nfst_to_string(struct nfst_StringTable *, int symbol);
 
 #include <assert.h>
 #include <memory.h>
+#include <stdint.h>
 
 #define HASH_FACTOR (2.0f)
 
@@ -220,9 +209,9 @@ int nfst_to_symbol(struct nfst_StringTable *st, const char *s)
 	return symbol;
 }
 
-/// As nfst_to_symbol(), but never adds the string to the table.
-/// If the string doesn't exist in the table NFST_STRING_TABLE_FULL
-/// is returned.
+// As nfst_to_symbol(), but never adds the string to the table.
+// If the string doesn't exist in the table NFST_STRING_TABLE_FULL
+// is returned.
 int nfst_to_symbol_const(const struct nfst_StringTable *const_st, const char *s)
 {
 	struct nfst_StringTable *st = (struct nfst_StringTable *)const_st;
@@ -413,6 +402,8 @@ static void rebuild_hash_table(struct nfst_StringTable *st)
 	}
 
 #endif
+
+// ## Performance Test
 
 #ifdef NFST_PERFORMANCE_TEST
 
