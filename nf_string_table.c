@@ -10,7 +10,7 @@
 // allocating the buffer. If the buffer runs out of memory you are responsible
 // for resizing it before you can add more strings.
 //
-// See example code in the Unit Test section below.
+// See example code in the **Unit Test** section below.
 
 // ## Interface
 
