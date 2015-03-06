@@ -107,7 +107,7 @@ void nfmt_record_free(void *p)
 // the streams from overflowing.
 struct nfmt_Buffer nfmt_read()
 {
-	struct nfmt_Buffer b
+	struct nfmt_Buffer b;
 	b.start = stream.buffer + stream.start;
 	int count = MIN(stream.start + stream.size, STREAM_SIZE) - stream.start;
 	b.end = b.start + count;
