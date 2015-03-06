@@ -9,10 +9,27 @@ class String
 end
 
 class DocGenerator
+	def initialize
+		@section = "Title"
+		@include_implementation = true
+	end
+
 	def generate(s)
 		groups = group(s.lines.collect {|line| tag(line)})
 		out = ""
+		has_written_functions = false
 		groups.each_with_index do |group, i|
+			if group.section == "Implementation" && !has_written_functions
+				functions(groups).each do |f|
+					next if f.is_static
+					out << "### #{escape_markdown(f.code.lines[0])}\n"
+					out << f.comment.texts.join('') << "\n"
+				end
+				has_written_functions = true
+
+				break unless @include_implementation
+			end
+
 			next_group = groups[i+1]
 			if group.type == :comment
 				out << group.texts.join('') << "\n"
@@ -41,14 +58,8 @@ private
 		lines.each do |line|
 			if line.type == :blank
 				blank = line
-			elsif line.type == :code
-				if blank && out.size>0 && out[-1].type == :code
-					blank.type = :code
-					out << blank
-					blank = nil
-				end
-				out << line
-			elsif line.type == :comment
+			else
+				blank.type = :code if blank && line.type==:code && out.size>0 && out[-1].type == :code
 				out << blank if blank
 				blank = nil
 				out << line
@@ -75,6 +86,36 @@ private
 			end
 		end
 		groups
+	end
+
+	def is_static(code)
+		l = code.lines[0]
+		if l[/^struct/]
+			!l[/^struct nf/]
+		elsif l[/^\#define/]
+			!l[/^\#define NF/]
+		else
+			l[/^static/]
+		end
+	end
+
+	def functions(groups)
+		fs = []
+		groups.each_with_index do |g,i|
+			next_g = groups[i+1]
+			if g.type == :comment && next_g && next_g.type == :code
+				fs << OpenStruct.new(
+					:comment => g,
+					:code => next_g,
+					:is_static => is_static(next_g)
+				)
+			end
+		end
+		fs
+	end
+
+	def escape_markdown(s)
+		s.gsub('*', '\\*').gsub('_', '\\_')
 	end
 end
 
