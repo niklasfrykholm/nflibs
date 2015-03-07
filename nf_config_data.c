@@ -59,7 +59,6 @@ nfcd_realloc nfcd_allocator(struct nfcd_ConfigData *cd, void **user_data);
 
 struct nfst_StringTable;
 void nfst_init(struct nfst_StringTable *st, int bytes, int average_string_size);
-int nfst_allocated_bytes(struct nfst_StringTable *st);
 void nfst_grow(struct nfst_StringTable *st, int bytes);
 int nfst_to_symbol(struct nfst_StringTable *st, const char *s);
 int nfst_to_symbol_const(const struct nfst_StringTable *st, const char *s);
@@ -70,16 +69,13 @@ const char *nfst_to_string(struct nfst_StringTable *, int symbol);
 //
 // Strings are stored in an nfst_StringTable, so for strings the offset
 // represents the offset into the string table.
-//
-// TODO: Currently the strings are stored in a separately allocated pointer,
-// but we should change that.
 
 // Container for the config data.
 struct nfcd_ConfigData
 {
+	int total_bytes;
 	int allocated_bytes;
 	int used_bytes;
-	struct nfst_StringTable *string_table;
 	nfcd_loc root;
 	nfcd_realloc realloc;
 	void *realloc_user_data;
@@ -120,6 +116,8 @@ struct object_item
 // Makes an `nfcd_loc` item from object and type.
 #define MAKE_LOC(type, offset)	((type) | (offset) << NFCD_TYPE_BITS)
 
+#define STRINGTABLE(cd)			((struct nfst_StringTable *)((char *)(cd) + (cd)->allocated_bytes))
+
 static nfcd_loc write(struct nfcd_ConfigData **cdp, int type, void *p, int count, int zeroes);
 static struct object_item *object_item(struct nfcd_ConfigData *cd, nfcd_loc object, int i);
 
@@ -128,10 +126,14 @@ static nfcd_loc write(struct nfcd_ConfigData **cdp, int type, void *p, int count
 	int total = count + zeroes;
 	struct nfcd_ConfigData *cd = *cdp;
 	while (cd->used_bytes + total > cd->allocated_bytes) {
-		int new_size = cd->allocated_bytes*2;
-		cd = cd->realloc(cd->realloc_user_data, cd, cd->allocated_bytes, new_size,
+		int string_bytes = cd->total_bytes - cd->allocated_bytes;
+		int new_allocated_bytes = cd->allocated_bytes * 2;
+		int new_total_bytes = new_allocated_bytes + string_bytes;
+		cd = cd->realloc(cd->realloc_user_data, cd, cd->total_bytes, new_total_bytes,
 			__FILE__, __LINE__);
-		cd->allocated_bytes = new_size;
+		memmove(cd + new_allocated_bytes, cd + cd->allocated_bytes, string_bytes);
+		cd->total_bytes = new_total_bytes;
+		cd->allocated_bytes = new_allocated_bytes;
 		*cdp = cd;
 	}
 	nfcd_loc loc = MAKE_LOC(type, cd->used_bytes);
@@ -152,17 +154,18 @@ struct nfcd_ConfigData *nfcd_make(nfcd_realloc realloc, void *ud, int config_siz
 	if (!stringtable_size)
 		stringtable_size = 8*1024;
 
-	struct nfcd_ConfigData *cd = realloc(ud, NULL, 0, config_size, __FILE__, __LINE__);
-	struct nfst_StringTable *st = realloc(ud, NULL, 0, stringtable_size, __FILE__, __LINE__);
+	int total_bytes = config_size + stringtable_size;
 
+	struct nfcd_ConfigData *cd = realloc(ud, NULL, 0, total_bytes, __FILE__, __LINE__);
+
+	cd->total_bytes = total_bytes;
 	cd->allocated_bytes = config_size;
 	cd->used_bytes = sizeof(*cd);
-	cd->string_table = st;
 	cd->root = NFCD_TYPE_NULL;
 	cd->realloc = realloc;
 	cd->realloc_user_data = ud;
 
-	nfst_init(st, stringtable_size, 15);
+	nfst_init(STRINGTABLE(cd), stringtable_size, 15);
 
 	return cd;
 }
@@ -170,12 +173,7 @@ struct nfcd_ConfigData *nfcd_make(nfcd_realloc realloc, void *ud, int config_siz
 // Frees an nfcd_ConfigData object created by nfcd_make.
 void nfcd_free(struct nfcd_ConfigData *cd)
 {
-	nfcd_realloc realloc = cd->realloc;
-	void *ud = cd->realloc_user_data;
-
-	int old_size = nfst_allocated_bytes(cd->string_table);
-	realloc(ud, cd->string_table, old_size, 0, __FILE__, __LINE__);
-	realloc(ud, cd, cd->allocated_bytes, 0, __FILE__, __LINE__);
+	cd->realloc(cd->realloc_user_data, cd, cd->total_bytes, 0, __FILE__, __LINE__);
 }
 
 // Returns the root item of the config data.
@@ -199,7 +197,7 @@ double nfcd_to_number(struct nfcd_ConfigData *cd, nfcd_loc loc)
 // Returns the string representation of `loc`.
 const char *nfcd_to_string(struct nfcd_ConfigData *cd, nfcd_loc loc)
 {
-	return nfst_to_string(cd->string_table, LOC_OFFSET(loc));
+	return nfst_to_string(STRINGTABLE(cd), LOC_OFFSET(loc));
 }
 
 // Returns the number of array items in `loc`.
@@ -299,7 +297,7 @@ nfcd_loc nfcd_object_value(struct nfcd_ConfigData *cd, nfcd_loc object, int i)
 // the object, without the O(n) cost of `nfcd_object_lookup()`.
 nfcd_loc nfcd_object_lookup(struct nfcd_ConfigData *cd, nfcd_loc object, const char *key)
 {
-	nfcd_loc key_loc = MAKE_LOC(NFCD_TYPE_STRING, nfst_to_symbol_const(cd->string_table, key));
+	nfcd_loc key_loc = MAKE_LOC(NFCD_TYPE_STRING, nfst_to_symbol_const(STRINGTABLE(cd), key));
 
 	struct block *block = (struct block *)((char *)cd + LOC_OFFSET(object));
 	while (1) {
@@ -348,15 +346,18 @@ nfcd_loc nfcd_add_number(struct nfcd_ConfigData **cdp, double n)
 nfcd_loc nfcd_add_string(struct nfcd_ConfigData **cdp, const char *s)
 {
 	struct nfcd_ConfigData *cd = *cdp;
-	struct nfst_StringTable *st = cd->string_table;
+	struct nfst_StringTable *st = STRINGTABLE(cd);
 	int sym = nfst_to_symbol(st, s);
 	while (sym < 0) {
-		int old_size = nfst_allocated_bytes(st);
-		int new_size = old_size * 2;
-		st = cd->realloc(cd->realloc_user_data,
-			st, old_size, new_size, __FILE__, __LINE__);
-		nfst_grow(st, new_size);
+		int string_bytes = cd->total_bytes - cd->allocated_bytes;
+		int new_string_bytes = string_bytes * 2;
+		int new_total_bytes = cd->allocated_bytes + new_string_bytes;
+		cd = cd->realloc(cd->realloc_user_data, cd, cd->total_bytes, new_total_bytes, __FILE__, __LINE__);
+		cd->total_bytes = new_total_bytes;
+		st = STRINGTABLE(cd);
+		nfst_grow(st, new_string_bytes);
 		sym = nfst_to_symbol(st, s);
+		*cdp = cd;
 	}
 
 	return MAKE_LOC(NFCD_TYPE_STRING, sym);
@@ -519,6 +520,18 @@ nfcd_realloc nfcd_allocator(struct nfcd_ConfigData *cd, void **user_data)
 		assert(nfcd_to_number(cd, nfcd_object_lookup(cd, obj, "age")) == 41);
 		assert(nfcd_type(cd, nfcd_object_lookup(cd, obj, "title")) == NFCD_TYPE_NULL);
 
+		struct nfcd_ConfigData *copy = realloc_f(0, 0, 0, cd->total_bytes, __FILE__, __LINE__);
+		memcpy(copy, cd, cd->total_bytes);
+		assert(nfcd_type(copy, obj) == NFCD_TYPE_OBJECT);
+		assert(nfcd_object_size(copy, obj) == 2);
+		assert(strcmp(nfcd_object_key(copy, obj, 1), "age") == 0);
+		assert(nfcd_type(copy, nfcd_object_value(copy, obj, 0)) == NFCD_TYPE_STRING);
+		assert(strcmp(nfcd_to_string(copy, nfcd_object_value(copy, obj, 0)), "Niklas") == 0);
+		assert(nfcd_type(copy, nfcd_object_lookup(copy, obj, "age")) == NFCD_TYPE_NUMBER);
+		assert(nfcd_to_number(copy, nfcd_object_lookup(copy, obj, "age")) == 41);
+		assert(nfcd_type(copy, nfcd_object_lookup(copy, obj, "title")) == NFCD_TYPE_NULL);
+
+		nfcd_free(copy);
 		nfcd_free(cd);
 		assert(memlog_size == 0);
 	}
