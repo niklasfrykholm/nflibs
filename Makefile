@@ -30,6 +30,7 @@ clean:
 	rm -f *.obj
 	rm -f vc120.pdb
 	rm -f nflibs.h
+	rm -rf doc
 
 .PHONY: header
 header:
