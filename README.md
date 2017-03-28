@@ -2,6 +2,10 @@
 
 *nflibs* is a collection of  C99 utility libraries. Each library has a singular specific purpose and a minimalistic decoupled API. But unlike for example the  great `stb_*` libraries, they are not completely isolated units. Instead, they have been written to work together. For example, *nf_config_data* uses *nf_string_table* to store strings and *nf_json_parser* produces output in the *nf_config_data* format.
 
+## License
+
+*nflibs* is in the public domain.
+
 ## Libraries
 
 This section provides a short description of all the different libraries, see the `*.c` files for a detailed description of each library.
@@ -24,7 +28,7 @@ Implements string to symbol (integer) conversion (i.e. interning), for more comp
 
 ## Design Philosophy
 
-The *nflibs* are an experiment in creating a set of libraries that interoperate (so that higher level functionality can be built on top of a lower level foundation), but still are decoupled and isolated enough that you can plug them into any kind of project without feeling too bad about it. 
+The *nflibs* are an experiment in creating a set of libraries that interoperate (so that higher level functionality can be built on top of a lower level foundation), but still are decoupled and isolated enough that you can plug them into any kind of project without feeling too bad about it.
 
 ### C99
 
