@@ -131,7 +131,7 @@ static nfcd_loc write(struct nfcd_ConfigData **cdp, int type, void *p, int count
 		int new_total_bytes = new_allocated_bytes + string_bytes;
 		cd = cd->realloc(cd->realloc_user_data, cd, cd->total_bytes, new_total_bytes,
 			__FILE__, __LINE__);
-		memmove(cd + new_allocated_bytes, cd + cd->allocated_bytes, string_bytes);
+		memmove((char *)cd + new_allocated_bytes, (char *)cd + cd->allocated_bytes, string_bytes);
 		cd->total_bytes = new_total_bytes;
 		cd->allocated_bytes = new_allocated_bytes;
 		*cdp = cd;

@@ -27,6 +27,8 @@ struct nfjp_Settings
 	int optional_commas;
 	int equals_for_colon;
 	int python_multiline_strings;
+	int skip_escape_sequences;
+	int allow_control_characters;
 };
 const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp);
 const char *nfjp_parse_with_settings(const char *s, struct nfcd_ConfigData **cdp, struct nfjp_Settings *settings);
@@ -178,11 +180,15 @@ const char *nfjp_parse(const char *s, struct nfcd_ConfigData **cdp)
 //   is the string end marker `"""`.
 const char *nfjp_parse_with_settings(const char *s, struct nfcd_ConfigData **cdp, struct nfjp_Settings *settings)
 {
+	nfcd_loc root = -1;
 	struct Parser p = {s, 1, cdp, settings, 0};
 	if (setjmp(p.env))
+	{
+		root = nfcd_add_object(cdp, 0);
+		nfcd_set_root(*cdp, root);
 		return p.error;
+	}
 	skip_whitespace(&p);
-	nfcd_loc root = -1;
 	if (p.settings->implicit_root_object && *p.s != '{') {
 		if (*p.s == 0)
 			root = nfcd_add_object(p.cdp, 0);
@@ -246,9 +252,9 @@ static nfcd_loc parse_string(struct Parser *p)
 	while (1) {
 		if (*p->s == 0 || *p->s == '"')
 			break;
-		else if (*p->s < 32)
+		else if (!p->settings->allow_control_characters && (unsigned char)(*p->s) < 32)
 			error(p, "Literal control character in string");
-		else if (*p->s == '\\') {
+		else if (!p->settings->skip_escape_sequences && *p->s == '\\') {
 			++p->s;
 			char c = *p->s;
 			++p->s;
@@ -605,7 +611,7 @@ static void lb_grow(struct Parser *p, struct LocBuffer *lb)
 	lb->allocated *= 2;
 
 	if (manual_copy)
-		memcpy(lb->data, lb->buffer, lb->n);
+		memcpy(lb->data, lb->buffer, sizeof(nfcd_loc) * lb->n);
 }
 
 // Frees the memory used by `lb`.
